@@ -1,0 +1,6 @@
+{
+  "name": "ProjectLinkUMS",
+  "description": "Student-to-student project discovery, explainable skill and schedule matching, and team collaboration platform for Universiti Malaysia Sabah (UMS).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

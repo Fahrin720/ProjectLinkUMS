@@ -1,0 +1,6 @@
+{
+  "summary": "Pelan pelaksanaan Sistem Backend Autentikasi Sebenar (/api/auth), pengesahan ketat e-mel & kata laluan (SHA-256), pengurusan sesi kekal, serta integrasi penuh Login, Sign Up, Reset Password, dan Log Out pada antara muka ProjectLink UMS.",
+  "updatedAt": "2026-11-06T05:01:53.062988024Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
