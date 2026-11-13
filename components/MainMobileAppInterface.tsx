@@ -17,6 +17,8 @@ import {
   WEEKDAY_SHORT,
 } from '@/lib/seed-data';
 import EmailVerificationModal from '@/components/EmailVerificationModal';
+import PitchDeckStudio from '@/components/PitchDeckStudio';
+import {downloadProjectLinkPptx} from '@/lib/pptx-exporter';
 import {
   Proficiency,
   Project,
@@ -63,6 +65,8 @@ import {
   Pencil,
   Phone,
   Plus,
+  Presentation,
+  Download,
   RotateCcw,
   Search,
   Send,
@@ -690,6 +694,7 @@ export function MainMobileAppInterface() {
     | 'authenticated'
   >('splash');
   const [isExpandedCanvas, setIsExpandedCanvas] = useState(false);
+  const [isPitchDeckOpen, setIsPitchDeckOpen] = useState(false);
 
   // Form states for Stage 3: Sign In, Sign Up & Reset Password (/api/auth)
   const [loginEmail, setLoginEmail] = useState('fahrinmuneer3@gmail.com');
@@ -2658,6 +2663,47 @@ export function MainMobileAppInterface() {
               <span>Muat 3 Aktiviti Contoh UMS</span>
             </button>
           </div>
+
+          {/* EIS'26 CEDeC UMS Innovation Pitch Deck & .PPTX Exporter Card */}
+          <div className="rounded-2xl bg-gradient-to-br from-[#6215E5]/35 via-[#18073B]/90 to-emerald-500/20 border border-purple-300/40 p-3.5 space-y-2.5 shadow-lg">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                <Presentation className="w-3.5 h-3.5 text-amber-300" />
+                <span>Slide Pitching EIS’26 (CEDeC)</span>
+              </span>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-200 border border-amber-300/30">
+                5m + 10m Q&A
+              </span>
+            </div>
+            <p className="text-[11px] text-purple-100/85 leading-relaxed">
+              Dek pembentangan 10 slide 16:9 dalam Bahasa Melayu lengkap dengan
+              pemasa loceng EIS’26 (minit ke-4 & ke-5), nota skrip pembentang,
+              dan eksport fail PowerPoint (.pptx).
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsPitchDeckOpen(true)}
+                className="py-2 px-3 rounded-xl bg-gradient-to-r from-[#6215E5] to-[#7C3AED] hover:from-[#5410CC] hover:to-[#6D28D9] text-white font-extrabold text-[11px] flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer"
+              >
+                <Presentation className="w-3.5 h-3.5" />
+                <span>Buka Slide (10)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  downloadProjectLinkPptx();
+                  notifyToast(
+                    'Fail PowerPoint ProjectLink_UMS_EIS26_Pitch_Deck.pptx sedang dimuat turun!'
+                  );
+                }}
+                className="py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[11px] flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Muat Turun .PPTX</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Footer Info & Responsive Viewport Size Switcher */}
@@ -3451,7 +3497,17 @@ export function MainMobileAppInterface() {
                   </div>
                 </button>
 
-                <div className="flex items-center gap-2.5 text-[#141132] shrink-0">
+                <div className="flex items-center gap-2 text-[#141132] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsPitchDeckOpen(true)}
+                    aria-label="Buka Slide Pitching EIS'26"
+                    title="Buka Slide Pitching EIS'26 (10 Slide + .PPTX)"
+                    className="px-2 py-1 rounded-xl bg-[#6315EA]/12 hover:bg-[#6315EA]/20 border border-[#6315EA]/25 text-[#5B18E5] text-[10.5px] font-extrabold flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Presentation className="w-3.5 h-3.5 stroke-[2.2]" />
+                    <span>Slide</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -10124,6 +10180,23 @@ export function MainMobileAppInterface() {
                         </span>
                       </button>
                     )}
+                    {/* Slide Pitching EIS'26 (CEDeC UMS) Launch Item */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSidebarOpen(false);
+                        setIsPitchDeckOpen(true);
+                      }}
+                      className="w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-[13px] bg-gradient-to-r from-[#6215E5] to-[#4C11C4] text-white font-extrabold shadow-sm hover:opacity-95 transition-all cursor-pointer"
+                    >
+                      <span className="flex items-center gap-3">
+                        <Presentation className="w-4 h-4 text-amber-300" />
+                        <span>Slide Pitching EIS’26</span>
+                      </span>
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-white/15 text-amber-200">
+                        10 Slide + .PPTX
+                      </span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -13000,6 +13073,11 @@ export function MainMobileAppInterface() {
           </div>
         )}
       </div>
+
+      {/* Full-Screen Interactive EIS'26 Pitch Deck Studio & .PPTX Exporter Modal */}
+      {isPitchDeckOpen && (
+        <PitchDeckStudio onClose={() => setIsPitchDeckOpen(false)} />
+      )}
     </div>
   );
 }
