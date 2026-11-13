@@ -49,9 +49,25 @@ const serverDb = {
 
 export async function GET(req: NextRequest) {
   const {searchParams} = new URL(req.url);
-  const studentId = searchParams.get('student_id') || 'usr-aiman';
+  const studentId = searchParams.get('student_id') || 'usr-admin';
   const student =
     serverDb.profiles.find((p) => p.id === studentId) || serverDb.profiles[0];
+
+  if (!student) {
+    return NextResponse.json({
+      ok: true,
+      student_id: studentId,
+      ranked_matches: [],
+      counts: {
+        profiles: 0,
+        projects: 0,
+        skills: 0,
+        interests: 0,
+        applications: 0,
+        invitations: 0,
+      },
+    });
+  }
 
   const rankedMatches = serverDb.projects.map((project) => ({
     project_id: project.id,

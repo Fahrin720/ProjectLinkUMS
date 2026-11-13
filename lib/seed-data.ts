@@ -1,36 +1,53 @@
 import {
-  Profile,
-  Skill,
-  StudentSkill,
-  Interest,
-  StudentInterest,
-  AvailabilitySlot,
-  Project,
-  ProjectRequiredSkill,
-  ProjectInterest,
-  ProjectMeetingSlot,
   Application,
-  ProjectMember,
-  ProjectInvitation,
-  NotificationItem,
+  AvailabilitySlot,
   BetaTestResult,
-  ProjectTask,
-  ProjectMessage,
-  SavedProject,
+  Interest,
   ModerationReport,
+  NotificationItem,
+  Profile,
+  Project,
+  ProjectGalleryItem,
+  ProjectInterest,
+  ProjectInvitation,
+  ProjectMeetingSlot,
+  ProjectMember,
+  ProjectMessage,
+  ProjectRequiredSkill,
+  ProjectTask,
+  SavedProject,
+  Skill,
   StudentActivityHistory,
+  StudentInterest,
+  StudentSkill,
 } from './types';
 
 export const UMS_FACULTIES = [
   'Fakulti Komputeran dan Informatik (FKI), UMS',
   'Faculty of Engineering (FKJ)',
-  'Faculty of Science and Natural Resources (FSSA)',
   'Faculty of Business, Economics and Accountancy (FPEP)',
+  'Faculty of Science and Natural Resources (FSSA)',
   'Faculty of Psychology and Education (FPP)',
   'Faculty of Medicine and Health Sciences (FPSK)',
+  'Faculty of Social Sciences and Humanities (FSSK)',
+  'Faculty of Food Science and Nutrition (FSMP)',
   'Faculty of Sustainable Agriculture (FPL)',
-  'Borneo Marine Research Institute (IPMB)',
+  'Labuan Faculty of International Finance (FKAL)',
 ];
+
+export const UMS_FACULTY_CODES = [
+  'All',
+  'FKI',
+  'FKJ',
+  'FPEP',
+  'FSSA',
+  'FPSK',
+  'FSSK',
+  'FPP',
+  'FSMP',
+  'FPL',
+  'FKAL',
+] as const;
 
 export const WEEKDAY_NAMES: Record<number, string> = {
   1: 'Monday',
@@ -52,63 +69,444 @@ export const WEEKDAY_SHORT: Record<number, string> = {
   7: 'Sun',
 };
 
-// 02. SKILL CATALOG (Canonical 04_SEED_CATALOGS.sql + Fahrin Profile & Home Filter Skills)
+// No pre-seeded example gallery images — activities only show images uploaded by their author
+export function getDefaultGalleryForProject(
+  _projectId: string,
+  _title?: string,
+  _location?: string,
+  _dateDisplay?: string
+): ProjectGalleryItem[] {
+  return [];
+}
+
+// ============================================================
+// OFFICIAL PREDETERMINED TAXONOMY CATEGORIES & TAGS
+// ============================================================
+export const SKILL_CATEGORIES = [
+  'Tech & AI (FKI)',
+  'Engineering & IoT (FKJ)',
+  'Science, Marine & Agro (FSSA/FPL)',
+  'Business & Finance (FPEP/FKAL)',
+  'Health, Food & Psychology (FPSK/FSMP/FPP)',
+  'Creative, Media & Arts (FSSK)',
+  'Leadership & Operations',
+  'Academic & Research',
+] as const;
+
+export const INTEREST_CATEGORIES = [
+  'Teknologi & Inovasi',
+  'Sains, Marin & Kelestarian',
+  'Keusahawanan & Kewangan',
+  'Kesihatan, Pendidikan & CSR',
+  'Seni, Budaya & Sukan',
+] as const;
+
+export interface OfficialFilterTagItem {
+  id: string;
+  label: string;
+  group: 'Kemahiran & Bidang' | 'Gaya Kerja & Pasukan';
+}
+
+export const OFFICIAL_FILTER_TAGS: OfficialFilterTagItem[] = [
+  {id: 'Programming', label: 'Programming', group: 'Kemahiran & Bidang'},
+  {id: 'Planning', label: 'Planning', group: 'Kemahiran & Bidang'},
+  {id: 'Database', label: 'Database', group: 'Kemahiran & Bidang'},
+  {id: 'UI/UX Design', label: 'UI/UX Design', group: 'Kemahiran & Bidang'},
+  {id: 'AI & Data', label: 'AI & Data', group: 'Kemahiran & Bidang'},
+  {
+    id: 'Engineering & IoT',
+    label: 'Engineering & IoT',
+    group: 'Kemahiran & Bidang',
+  },
+  {id: 'Sains & Marin', label: 'Sains & Marin', group: 'Kemahiran & Bidang'},
+  {
+    id: 'Perniagaan & Tajaan',
+    label: 'Perniagaan & Tajaan',
+    group: 'Kemahiran & Bidang',
+  },
+  {
+    id: 'Kesihatan & Komuniti',
+    label: 'Kesihatan & Komuniti',
+    group: 'Kemahiran & Bidang',
+  },
+  {
+    id: 'Media & Kreatif',
+    label: 'Media & Kreatif',
+    group: 'Kemahiran & Bidang',
+  },
+  {id: 'Penyelidikan', label: 'Penyelidikan', group: 'Kemahiran & Bidang'},
+  {
+    id: 'Beginner Friendly',
+    label: 'Beginner Friendly',
+    group: 'Gaya Kerja & Pasukan',
+  },
+  {id: 'Rentas Fakulti', label: 'Rentas Fakulti', group: 'Gaya Kerja & Pasukan'},
+  {id: 'Kerja Lapangan', label: 'Kerja Lapangan', group: 'Gaya Kerja & Pasukan'},
+  {
+    id: 'Fleksibel / Hibrid',
+    label: 'Fleksibel / Hibrid',
+    group: 'Gaya Kerja & Pasukan',
+  },
+  {id: 'Extrovert', label: 'Extrovert', group: 'Gaya Kerja & Pasukan'},
+  {id: 'Female only', label: 'Female only', group: 'Gaya Kerja & Pasukan'},
+];
+
+export const OFFICIAL_CARD_HIGHLIGHT_TAGS: string[] = [
+  'AI & Tech',
+  'Smart Campus',
+  'IoT & Robotics',
+  'UI/UX & Web',
+  'Cybersecurity',
+  'Data & Cloud',
+  'Marine & Eco',
+  'AgriTech',
+  'Startup & Pitch',
+  'Finance & Biz',
+  'Health & Care',
+  'Food & Nutrition',
+  'Psychology & Edu',
+  'Media & Creative',
+  'Culture & Arts',
+  'Community CSR',
+  'Research & Lab',
+  'Networking',
+  'Teamwork',
+  'Fieldwork',
+  'SDP Tinggi',
+  'Competition',
+  'Innovation',
+  'Community',
+  'Assignment',
+];
+
+// ============================================================
+// 1. OFFICIAL PREDETERMINED SKILLS CATALOG (Covers All UMS Fields)
+// ============================================================
 export const INITIAL_SKILLS: Skill[] = [
-  {id: 'sk-c', name: 'C', category: 'Programming'},
-  {id: 'sk-java', name: 'Java', category: 'Programming'},
-  {id: 'sk-10', name: 'Python', category: 'Programming'},
-  {id: 'sk-web', name: 'Web Development', category: 'Programming'},
-  {id: 'sk-01', name: 'UI/UX', category: 'Design'},
-  {id: 'sk-14', name: 'Database', category: 'Data'},
-  {id: 'sk-git', name: 'Git & GitHub', category: 'Programming'},
-  {id: 'sk-20', name: 'Planning', category: 'Management'},
-  {id: 'sk-prog', name: 'Programming', category: 'Programming'},
-  {id: 'sk-02', name: 'Figma', category: 'Design'},
-  {id: 'sk-03', name: 'Graphic Design', category: 'Design'},
-  {id: 'sk-04', name: 'Frontend Development', category: 'Programming'},
-  {id: 'sk-05', name: 'Backend Development', category: 'Programming'},
-  {id: 'sk-06', name: 'JavaScript', category: 'Programming'},
-  {id: 'sk-07', name: 'TypeScript', category: 'Programming'},
-  {id: 'sk-08', name: 'React', category: 'Programming'},
-  {id: 'sk-09', name: 'Next.js', category: 'Programming'},
-  {id: 'sk-11', name: 'Flutter', category: 'Programming'},
-  {id: 'sk-13', name: 'SQL', category: 'Data'},
-  {id: 'sk-15', name: 'Data Analysis', category: 'Data'},
-  {id: 'sk-16', name: 'Research', category: 'Research'},
-  {id: 'sk-17', name: 'Academic Writing', category: 'Research'},
-  {id: 'sk-18', name: 'Presentation', category: 'Communication'},
-  {id: 'sk-19', name: 'Public Speaking', category: 'Communication'},
-  {id: 'sk-21', name: 'Pitching', category: 'Business'},
-  {id: 'sk-22', name: 'Marketing', category: 'Business'},
-  {id: 'sk-24', name: 'Video Editing', category: 'Media'},
+  // Tech & AI (FKI)
+  {
+    id: 'sk-web-mobile',
+    name: 'Web & Mobile Dev (React / Next.js)',
+    category: 'Tech & AI (FKI)',
+  },
+  {
+    id: 'sk-python-ai',
+    name: 'Python & Machine Learning',
+    category: 'Tech & AI (FKI)',
+  },
+  {
+    id: 'sk-uiux-figma',
+    name: 'UI/UX & Figma Prototyping',
+    category: 'Tech & AI (FKI)',
+  },
+  {
+    id: 'sk-database-sql',
+    name: 'Database & SQL Architecture',
+    category: 'Tech & AI (FKI)',
+  },
+  {
+    id: 'sk-cybersecurity',
+    name: 'Cybersecurity & Network Audit',
+    category: 'Tech & AI (FKI)',
+  },
+  {
+    id: 'sk-data-analytics',
+    name: 'Data Analytics & Dashboard',
+    category: 'Tech & AI (FKI)',
+  },
+
+  // Engineering & IoT (FKJ)
+  {
+    id: 'sk-iot-embedded',
+    name: 'IoT & Embedded Systems (ESP32 / Arduino)',
+    category: 'Engineering & IoT (FKJ)',
+  },
+  {
+    id: 'sk-cad-3d',
+    name: 'CAD & 3D Prototyping',
+    category: 'Engineering & IoT (FKJ)',
+  },
+  {
+    id: 'sk-robotics',
+    name: 'Robotics & Mechatronics',
+    category: 'Engineering & IoT (FKJ)',
+  },
+  {
+    id: 'sk-electronics',
+    name: 'Electronics & Sensor Hardware',
+    category: 'Engineering & IoT (FKJ)',
+  },
+  {
+    id: 'sk-renewable-civil',
+    name: 'Renewable Energy & Green Engineering',
+    category: 'Engineering & IoT (FKJ)',
+  },
+
+  // Science, Marine & Agro (FSSA/FPL)
+  {
+    id: 'sk-marine-survey',
+    name: 'Marine & Reef Field Survey',
+    category: 'Science, Marine & Agro (FSSA/FPL)',
+  },
+  {
+    id: 'sk-lab-analysis',
+    name: 'Laboratory Sampling & Bio-Assay',
+    category: 'Science, Marine & Agro (FSSA/FPL)',
+  },
+  {
+    id: 'sk-gis-mapping',
+    name: 'GIS & Environmental Mapping',
+    category: 'Science, Marine & Agro (FSSA/FPL)',
+  },
+  {
+    id: 'sk-sustainable-agro',
+    name: 'Sustainable Crop & AgriTech',
+    category: 'Science, Marine & Agro (FSSA/FPL)',
+  },
+
+  // Business & Finance (FPEP/FKAL)
+  {
+    id: 'sk-biz-pitching',
+    name: 'Business Model & Startup Pitching',
+    category: 'Business & Finance (FPEP/FKAL)',
+  },
+  {
+    id: 'sk-finance-acct',
+    name: 'Financial Budgeting & Accounting',
+    category: 'Business & Finance (FPEP/FKAL)',
+  },
+  {
+    id: 'sk-digital-mkt',
+    name: 'Digital Marketing & Social Growth',
+    category: 'Business & Finance (FPEP/FKAL)',
+  },
+  {
+    id: 'sk-sponsorship',
+    name: 'Corporate Sponsorship & PR',
+    category: 'Business & Finance (FPEP/FKAL)',
+  },
+
+  // Health, Food & Psychology (FPSK/FSMP/FPP)
+  {
+    id: 'sk-health-firstaid',
+    name: 'First Aid & Community Health Screening',
+    category: 'Health, Food & Psychology (FPSK/FSMP/FPP)',
+  },
+  {
+    id: 'sk-food-nutrition',
+    name: 'Food Safety & Nutrition Analysis',
+    category: 'Health, Food & Psychology (FPSK/FSMP/FPP)',
+  },
+  {
+    id: 'sk-peer-counseling',
+    name: 'Peer Support & Psychosocial Facilitation',
+    category: 'Health, Food & Psychology (FPSK/FSMP/FPP)',
+  },
+  {
+    id: 'sk-stem-teaching',
+    name: 'Educational Mentoring & Workshop Module',
+    category: 'Health, Food & Psychology (FPSK/FSMP/FPP)',
+  },
+
+  // Creative, Media & Arts (FSSK)
+  {
+    id: 'sk-graphic-poster',
+    name: 'Graphic Design & Visual Branding',
+    category: 'Creative, Media & Arts (FSSK)',
+  },
+  {
+    id: 'sk-photo-video',
+    name: 'Photography & Documentary Videography',
+    category: 'Creative, Media & Arts (FSSK)',
+  },
+  {
+    id: 'sk-video-editing',
+    name: 'Video Editing & Motion Graphics',
+    category: 'Creative, Media & Arts (FSSK)',
+  },
+  {
+    id: 'sk-copywriting-mc',
+    name: 'Copywriting, Journalism & Emcee',
+    category: 'Creative, Media & Arts (FSSK)',
+  },
+
+  // Leadership & Operations
+  {
+    id: 'sk-event-planning',
+    name: 'Project Management & Event Planning',
+    category: 'Leadership & Operations',
+  },
+  {
+    id: 'sk-logistics-ops',
+    name: 'Campus Logistics, Venue & Protocol',
+    category: 'Leadership & Operations',
+  },
+  {
+    id: 'sk-secretary-doc',
+    name: 'Secretarial, Paperwork & JHEP Proposal',
+    category: 'Leadership & Operations',
+  },
+  {
+    id: 'sk-community-csr',
+    name: 'Community Engagement & Volunteer Ops',
+    category: 'Leadership & Operations',
+  },
+
+  // Academic & Research
+  {
+    id: 'sk-academic-writing',
+    name: 'Academic Writing & Literature Review',
+    category: 'Academic & Research',
+  },
+  {
+    id: 'sk-stats-spss',
+    name: 'Statistical Analysis (SPSS / R)',
+    category: 'Academic & Research',
+  },
+  {
+    id: 'sk-debate-speaking',
+    name: 'Public Speaking, Presentation & Debate',
+    category: 'Academic & Research',
+  },
 ];
 
-// 04. INTEREST CATALOG (Canonical 04_SEED_CATALOGS.sql + Fahrin Profile Interests)
+// ============================================================
+// 2. OFFICIAL PREDETERMINED INTERESTS (MINAT) CATALOG
+// ============================================================
 export const INITIAL_INTERESTS: Interest[] = [
-  {id: 'in-16', name: 'Gaming'},
-  {id: 'in-01', name: 'Tech'},
-  {id: 'in-collab', name: 'Project Collab'},
-  {id: 'in-learn', name: 'Learning'},
-  {id: 'in-02', name: 'Innovation'},
-  {id: 'in-03', name: 'Web Development'},
-  {id: 'in-04', name: 'Mobile Apps'},
-  {id: 'in-05', name: 'Artificial Intelligence'},
-  {id: 'in-06', name: 'Data Science'},
-  {id: 'in-07', name: 'Hackathon'},
-  {id: 'in-08', name: 'Entrepreneurship'},
-  {id: 'in-09', name: 'Sustainability'},
-  {id: 'in-11', name: 'Environment'},
-  {id: 'in-12', name: 'Community Service'},
-  {id: 'in-13', name: 'Research'},
-  {id: 'in-14', name: 'Design'},
-  {id: 'in-15', name: 'Business'},
+  // Teknologi & Inovasi
+  {
+    id: 'in-ai-ml',
+    name: 'Artificial Intelligence (AI)',
+    category: 'Teknologi & Inovasi',
+  },
+  {
+    id: 'in-hackathon',
+    name: 'Hackathon & Software Building',
+    category: 'Teknologi & Inovasi',
+  },
+  {
+    id: 'in-smart-iot',
+    name: 'Smart Campus, Robotics & IoT',
+    category: 'Teknologi & Inovasi',
+  },
+  {
+    id: 'in-cyber-cloud',
+    name: 'Cybersecurity & Cloud Systems',
+    category: 'Teknologi & Inovasi',
+  },
+  {
+    id: 'in-gamedev-esports',
+    name: 'Game Development & Esports',
+    category: 'Teknologi & Inovasi',
+  },
+
+  // Sains, Marin & Kelestarian
+  {
+    id: 'in-marine-reef',
+    name: 'Marine & Coral Conservation',
+    category: 'Sains, Marin & Kelestarian',
+  },
+  {
+    id: 'in-climate-sdg',
+    name: 'Climate Action & Campus SDG',
+    category: 'Sains, Marin & Kelestarian',
+  },
+  {
+    id: 'in-biotech-lab',
+    name: 'Biotechnology & Natural Sciences',
+    category: 'Sains, Marin & Kelestarian',
+  },
+  {
+    id: 'in-agritech-food',
+    name: 'Sustainable Farming & Food Security',
+    category: 'Sains, Marin & Kelestarian',
+  },
+  {
+    id: 'in-renewable-energy',
+    name: 'Solar & Clean Energy',
+    category: 'Sains, Marin & Kelestarian',
+  },
+
+  // Keusahawanan & Kewangan
+  {
+    id: 'in-startup-biz',
+    name: 'Startup & Social Entrepreneurship',
+    category: 'Keusahawanan & Kewangan',
+  },
+  {
+    id: 'in-fintech-finance',
+    name: 'International Finance & FinTech',
+    category: 'Keusahawanan & Kewangan',
+  },
+  {
+    id: 'in-digital-commerce',
+    name: 'E-Commerce & Digital Branding',
+    category: 'Keusahawanan & Kewangan',
+  },
+  {
+    id: 'in-career-industry',
+    name: 'Industry Networking & Leadership',
+    category: 'Keusahawanan & Kewangan',
+  },
+
+  // Kesihatan, Pendidikan & CSR
+  {
+    id: 'in-rural-csr',
+    name: 'Sabah Rural Community Outreach (CSR)',
+    category: 'Kesihatan, Pendidikan & CSR',
+  },
+  {
+    id: 'in-mental-health',
+    name: 'Mental Health & Student Wellbeing',
+    category: 'Kesihatan, Pendidikan & CSR',
+  },
+  {
+    id: 'in-public-health',
+    name: 'Public Health & Clinical Volunteering',
+    category: 'Kesihatan, Pendidikan & CSR',
+  },
+  {
+    id: 'in-nutrition-halal',
+    name: 'Healthy Diet & Food Innovation',
+    category: 'Kesihatan, Pendidikan & CSR',
+  },
+  {
+    id: 'in-stem-mentoring',
+    name: 'School STEM & Literacy Mentoring',
+    category: 'Kesihatan, Pendidikan & CSR',
+  },
+
+  // Seni, Budaya & Sukan
+  {
+    id: 'in-borneo-heritage',
+    name: 'Borneo Culture, Tamu & Heritage',
+    category: 'Seni, Budaya & Sukan',
+  },
+  {
+    id: 'in-film-photography',
+    name: 'Creative Media, Film & Photography',
+    category: 'Seni, Budaya & Sukan',
+  },
+  {
+    id: 'in-debate-mun',
+    name: 'Debate, Diplomacy & Public Speaking',
+    category: 'Seni, Budaya & Sukan',
+  },
+  {
+    id: 'in-sports-outdoor',
+    name: 'Outdoor Expedition & Campus Sports',
+    category: 'Seni, Budaya & Sukan',
+  },
 ];
 
-// 01. PROFILES (Normalized UMS student & organizer profiles)
+// ============================================================
+// 3. PROFILES (System Admin: Fahrin Muneer — fahrinmuneer3@gmail.com)
+// ============================================================
 export const INITIAL_PROFILES: Profile[] = [
   {
-    id: 'usr-aiman',
-    display_name: 'Fahrin',
+    id: 'usr-admin',
+    display_name: 'Fahrin Muneer',
     matric_no: 'A2412345',
     faculty: 'Fakulti Komputeran dan Informatik (FKI), UMS',
     faculty_short: 'FKI',
@@ -116,653 +514,588 @@ export const INITIAL_PROFILES: Profile[] = [
     year_of_study: 2,
     location: 'Kota Kinabalu',
     availability_status: 'Available',
-    role_mode: 'STUDENT',
-    bio: "SE student at UMS who's passionate about building practical and impactful projects, especially in web and app development. Always open to collaborate and learn new things!",
+    role: 'admin',
+    role_mode: 'ORGANIZER',
+    bio: 'Pentadbir Sistem (System Admin) ProjectLink UMS. Pelajar Kejuruteraan Perisian FKI yang aktif dalam pembangunan aplikasi kampus pintar dan kolaborasi rentas fakulti.',
     avatar_url: null,
     avatar_variant: 0,
-    weekly_hours: 14,
-    preferred_project_types: ['Competition', 'Innovation', 'Assignment'],
-    active_filter_tags: [
-      'Programming',
-      'Planning',
-      'Database',
-      'Extrovert',
-      'Female only',
+    weekly_hours: 15,
+    preferred_project_types: [
+      'Competition',
+      'Innovation',
+      'Community',
+      'Assignment',
     ],
-    email: 'fahrin.a2412345@student.ums.edu.my',
+    active_filter_tags: ['Programming', 'Planning', 'AI & Data'],
+    email: 'fahrinmuneer3@gmail.com',
     phone: '+60 13-884 2412',
-    linkedin: 'linkedin.com/in/fahrin-ums-fki',
+    linkedin: 'linkedin.com/in/fahrin-muneer-ums',
     discoverable: true,
-    consent_at: '2026-10-15T08:30:00Z',
-    created_at: '2026-10-15T08:30:00Z',
-    updated_at: '2026-11-04T10:15:00Z',
-    is_fictional_test_account: true,
-  },
-  {
-    id: 'usr-izzah',
-    display_name: 'Nurul Izzah',
-    matric_no: 'A2411089',
-    faculty: 'Fakulti Komputeran dan Informatik (FKI), UMS',
-    faculty_short: 'FKI',
-    programme: 'Data Science',
-    year_of_study: 2,
-    location: 'Kota Kinabalu',
-    availability_status: 'Available',
-    role_mode: 'STUDENT',
-    bio: 'Passionate about Python data pipelines, human-centered UI/UX design in Figma, and sustainability research across Sabah.',
-    avatar_url: null,
-    weekly_hours: 12,
-    preferred_project_types: ['Innovation', 'Competition', 'Community'],
-    active_filter_tags: ['Programming', 'Database', 'Female only'],
-    email: 'izzah.a2411089@student.ums.edu.my',
-    phone: '+60 19-821 4401',
-    linkedin: 'linkedin.com/in/nurul-izzah-fki',
-    discoverable: true,
-    consent_at: '2026-10-16T09:00:00Z',
-    created_at: '2026-10-16T09:00:00Z',
-    updated_at: '2026-11-02T14:20:00Z',
-    is_fictional_test_account: true,
-  },
-  {
-    id: 'usr-daniel',
-    display_name: 'Daniel Wong',
-    matric_no: 'A2310452',
-    faculty: 'Faculty of Engineering (FKJ)',
-    faculty_short: 'FKJ',
-    programme: 'Electrical & Electronics Engineering',
-    year_of_study: 3,
-    location: 'Kota Kinabalu',
-    availability_status: 'In Team',
-    role_mode: 'ORGANIZER',
-    bio: 'Embedded systems & full-stack prototyper. Organizer for FKI TechFest 2026 and hardware-software integration competitions.',
-    avatar_url: null,
-    weekly_hours: 10,
-    preferred_project_types: ['Competition', 'Innovation'],
-    active_filter_tags: ['Programming', 'Planning', 'Extrovert'],
-    email: 'daniel.a2310452@student.ums.edu.my',
-    phone: '+60 16-833 9012',
-    linkedin: 'linkedin.com/in/daniel-wong-ums',
-    discoverable: true,
-    consent_at: '2026-10-18T11:00:00Z',
-    created_at: '2026-10-18T11:00:00Z',
-    updated_at: '2026-11-02T16:00:00Z',
+    consent_at: '2026-10-01T08:00:00Z',
+    created_at: '2026-10-01T08:00:00Z',
+    updated_at: '2026-11-01T08:00:00Z',
     is_admin: true,
-    is_fictional_test_account: true,
-  },
-  {
-    id: 'usr-farah',
-    display_name: 'Farah Syuhada',
-    matric_no: 'A2312091',
-    faculty: 'Faculty of Business, Economics and Accountancy (FPEP)',
-    faculty_short: 'FPEP',
-    programme: 'Marketing',
-    year_of_study: 3,
-    location: 'Kota Kinabalu',
-    availability_status: 'Available',
-    role_mode: 'STUDENT',
-    bio: 'Focusing on social enterprise pitch decks, user research, market validation, and video storytelling for student competitions.',
-    avatar_url: null,
-    weekly_hours: 9,
-    preferred_project_types: ['Competition', 'Innovation', 'Community'],
-    discoverable: true,
-    consent_at: '2026-10-20T07:45:00Z',
-    created_at: '2026-10-20T07:45:00Z',
-    updated_at: '2026-11-01T09:10:00Z',
-    is_fictional_test_account: true,
-  },
-  {
-    id: 'usr-keith',
-    display_name: 'Keith Liew',
-    matric_no: 'A2210884',
-    faculty: 'Faculty of Science and Natural Resources (FSSA)',
-    faculty_short: 'FSSA',
-    programme: 'Environmental Science',
-    year_of_study: 4,
-    location: 'Kota Kinabalu',
-    availability_status: 'Available',
-    role_mode: 'ORGANIZER',
-    bio: 'Final-year researcher working on Borneo marine & terrestrial conservation datasets, statistical analysis, and academic writing.',
-    avatar_url: null,
-    weekly_hours: 8,
-    preferred_project_types: ['Innovation', 'Community', 'Other'],
-    discoverable: true,
-    consent_at: '2026-10-21T13:15:00Z',
-    created_at: '2026-10-21T13:15:00Z',
-    updated_at: '2026-11-01T13:15:00Z',
-    is_fictional_test_account: true,
+    is_fictional_test_account: false,
   },
 ];
 
-// 03. STUDENT_SKILLS (Normalized many-to-many skill records)
-// Fahrin (usr-aiman) has the exact 7 skills from the Profile screenshot: C, Java, Python, Web Development, UI/UX, Database, Git & GitHub
+// ============================================================
+// 4. DEFAULT STUDENT SKILLS, INTERESTS & AVAILABILITY FOR TESTING
+// ============================================================
 export const INITIAL_STUDENT_SKILLS: StudentSkill[] = [
-  // Fahrin (usr-aiman)
-  {student_id: 'usr-aiman', skill_id: 'sk-c', proficiency: 'intermediate'},
-  {student_id: 'usr-aiman', skill_id: 'sk-java', proficiency: 'intermediate'},
-  {student_id: 'usr-aiman', skill_id: 'sk-10', proficiency: 'advanced'}, // Python
-  {student_id: 'usr-aiman', skill_id: 'sk-web', proficiency: 'advanced'}, // Web Development
-  {student_id: 'usr-aiman', skill_id: 'sk-01', proficiency: 'beginner'}, // UI/UX
-  {student_id: 'usr-aiman', skill_id: 'sk-14', proficiency: 'beginner'}, // Database
-  {student_id: 'usr-aiman', skill_id: 'sk-git', proficiency: 'advanced'}, // Git & GitHub
-  // Nurul Izzah
-  {student_id: 'usr-izzah', skill_id: 'sk-01', proficiency: 'advanced'},
-  {student_id: 'usr-izzah', skill_id: 'sk-02', proficiency: 'advanced'},
-  {student_id: 'usr-izzah', skill_id: 'sk-10', proficiency: 'advanced'},
-  {student_id: 'usr-izzah', skill_id: 'sk-15', proficiency: 'intermediate'},
-  {student_id: 'usr-izzah', skill_id: 'sk-web', proficiency: 'intermediate'},
-  // Daniel Wong
-  {student_id: 'usr-daniel', skill_id: 'sk-c', proficiency: 'advanced'},
-  {student_id: 'usr-daniel', skill_id: 'sk-08', proficiency: 'intermediate'},
-  {student_id: 'usr-daniel', skill_id: 'sk-05', proficiency: 'intermediate'},
-  {student_id: 'usr-daniel', skill_id: 'sk-21', proficiency: 'advanced'},
-  // Farah Syuhada
-  {student_id: 'usr-farah', skill_id: 'sk-21', proficiency: 'advanced'},
-  {student_id: 'usr-farah', skill_id: 'sk-22', proficiency: 'advanced'},
-  {student_id: 'usr-farah', skill_id: 'sk-18', proficiency: 'advanced'},
-  // Keith Liew
-  {student_id: 'usr-keith', skill_id: 'sk-15', proficiency: 'advanced'},
-  {student_id: 'usr-keith', skill_id: 'sk-16', proficiency: 'advanced'},
-  {student_id: 'usr-keith', skill_id: 'sk-10', proficiency: 'intermediate'},
+  {
+    student_id: 'usr-admin',
+    skill_id: 'sk-web-mobile',
+    proficiency: 'advanced',
+  },
+  {
+    student_id: 'usr-admin',
+    skill_id: 'sk-python-ai',
+    proficiency: 'intermediate',
+  },
+  {
+    student_id: 'usr-admin',
+    skill_id: 'sk-uiux-figma',
+    proficiency: 'intermediate',
+  },
+  {
+    student_id: 'usr-admin',
+    skill_id: 'sk-database-sql',
+    proficiency: 'intermediate',
+  },
+  {
+    student_id: 'usr-admin',
+    skill_id: 'sk-event-planning',
+    proficiency: 'intermediate',
+  },
 ];
 
-// 05. STUDENT_INTERESTS (Normalized many-to-many interest records)
-// Fahrin (usr-aiman) has the exact 4 interests from the Profile screenshot: Gaming, Tech, Project Collab, Learning
 export const INITIAL_STUDENT_INTERESTS: StudentInterest[] = [
-  {student_id: 'usr-aiman', interest_id: 'in-16'}, // Gaming
-  {student_id: 'usr-aiman', interest_id: 'in-01'}, // Tech
-  {student_id: 'usr-aiman', interest_id: 'in-collab'}, // Project Collab
-  {student_id: 'usr-aiman', interest_id: 'in-learn'}, // Learning
-
-  {student_id: 'usr-izzah', interest_id: 'in-01'},
-  {student_id: 'usr-izzah', interest_id: 'in-05'},
-  {student_id: 'usr-izzah', interest_id: 'in-06'},
-  {student_id: 'usr-izzah', interest_id: 'in-14'},
-
-  {student_id: 'usr-daniel', interest_id: 'in-01'},
-  {student_id: 'usr-daniel', interest_id: 'in-02'},
-  {student_id: 'usr-daniel', interest_id: 'in-07'},
-
-  {student_id: 'usr-farah', interest_id: 'in-02'},
-  {student_id: 'usr-farah', interest_id: 'in-08'},
-  {student_id: 'usr-farah', interest_id: 'in-12'},
-
-  {student_id: 'usr-keith', interest_id: 'in-06'},
-  {student_id: 'usr-keith', interest_id: 'in-09'},
-  {student_id: 'usr-keith', interest_id: 'in-13'},
+  {student_id: 'usr-admin', interest_id: 'in-ai-ml'},
+  {student_id: 'usr-admin', interest_id: 'in-hackathon'},
+  {student_id: 'usr-admin', interest_id: 'in-smart-iot'},
+  {student_id: 'usr-admin', interest_id: 'in-startup-biz'},
+  {student_id: 'usr-admin', interest_id: 'in-climate-sdg'},
 ];
 
-// 06. AVAILABILITY_SLOTS (Asia/Kuching local time)
 export const INITIAL_AVAILABILITY_SLOTS: AvailabilitySlot[] = [
-  // Fahrin (usr-aiman)
-  {id: 'av-1', student_id: 'usr-aiman', weekday: 3, start_time: '14:00', end_time: '17:00'},
-  {id: 'av-2', student_id: 'usr-aiman', weekday: 5, start_time: '15:00', end_time: '18:00'},
-  {id: 'av-3', student_id: 'usr-aiman', weekday: 6, start_time: '10:00', end_time: '12:30'},
-  // Nurul Izzah
-  {id: 'av-4', student_id: 'usr-izzah', weekday: 3, start_time: '14:00', end_time: '16:30'},
-  {id: 'av-5', student_id: 'usr-izzah', weekday: 6, start_time: '10:00', end_time: '13:00'},
-  // Daniel Wong
-  {id: 'av-7', student_id: 'usr-daniel', weekday: 3, start_time: '15:00', end_time: '18:00'},
-  {id: 'av-8', student_id: 'usr-daniel', weekday: 5, start_time: '15:00', end_time: '17:30'},
-  // Farah Syuhada
-  {id: 'av-10', student_id: 'usr-farah', weekday: 2, start_time: '16:00', end_time: '18:00'},
-  {id: 'av-11', student_id: 'usr-farah', weekday: 6, start_time: '10:00', end_time: '13:00'},
-  // Keith Liew
-  {id: 'av-12', student_id: 'usr-keith', weekday: 3, start_time: '14:00', end_time: '16:00'},
-  {id: 'av-13', student_id: 'usr-keith', weekday: 6, start_time: '09:00', end_time: '12:00'},
+  {
+    id: 'av-seed-1',
+    student_id: 'usr-admin',
+    weekday: 3,
+    start_time: '14:00',
+    end_time: '17:30',
+  },
+  {
+    id: 'av-seed-2',
+    student_id: 'usr-admin',
+    weekday: 5,
+    start_time: '15:00',
+    end_time: '18:00',
+  },
+  {
+    id: 'av-seed-3',
+    student_id: 'usr-admin',
+    weekday: 6,
+    start_time: '09:00',
+    end_time: '13:00',
+  },
 ];
 
-// 07. PROJECTS (Normalized projects with rich UMS metadata & WhatsApp Organizer contact)
+// ============================================================
+// 5. CROSS-FACULTY UMS EXAMPLE ACTIVITIES FOR FILTERING & MATCHING TESTS
+// ============================================================
 export const INITIAL_PROJECTS: Project[] = [
   {
     id: 'prj-techfest',
-    owner_id: 'usr-daniel',
-    title: 'FKI TechFest 2026',
+    owner_id: 'ums-club-fki',
+    title: 'Borneo AI & Smart Campus Hackathon 2026',
     description:
-      'Pameran projek, bengkel teknologi, dan pertandingan inovasi anjuran FKI UMS.',
+      'Pertandingan 48 jam membangunkan penyelesaian AI dan aplikasi web pintar untuk kelestarian kampus UMS. Terbuka kepada pembangun perisian, pereka UI/UX, dan pembentang idea perniagaan.',
     project_type: 'Competition',
     slots_needed: 4,
     min_weekly_hours: 6,
     status: 'open',
-    deadline: '2026-11-14',
-    date_display: '12 – 14 Nov 2026',
-    location: 'Dewan Canselor, UMS',
-    audience: 'Terbuka kepada semua pelajar UMS',
-    badge_line_1: 'Program',
-    badge_line_2: 'Fakulti',
-    tags: ['Tech', 'Networking', 'Competition'],
-    attribute_tags: ['Programming', 'Planning', 'Database', 'Extrovert'],
+    deadline: '2026-11-24',
+    date_display: '22 – 24 Nov 2026',
+    location: 'Dewan Kuliah Pusat 2 (DKP 2) & Makmal AI FKI, UMS',
+    audience: 'Terbuka kepada pelajar FKI, FKJ, FPEP & semua fakulti UMS',
+    badge_line_1: 'Hackathon',
+    badge_line_2: 'FKI · FKJ',
+    tags: ['AI & Tech', 'Smart Campus', 'Competition'],
+    attribute_tags: [
+      'Programming',
+      'AI & Data',
+      'UI/UX Design',
+      'Planning',
+      'Rentas Fakulti',
+    ],
     trending: true,
-    organizer_name: 'Daniel Wong (Jawatankuasa FKI TechFest)',
-    organizer_phone: '+6012-883 4910',
-    created_at: '2026-11-01T08:00:00Z',
-    updated_at: '2026-11-04T06:00:00Z',
+    organizer_name: 'Kelab Kejuruteraan Perisian (FKI UMS)',
+    organizer_phone: '+60 12-883 4910',
+    banner_url: null,
+    banner_preset: 'prj-techfest',
+    banner_position_y: 50,
+    gallery_images: [],
+    created_at: '2026-11-06T09:00:00Z',
+    updated_at: '2026-11-06T09:00:00Z',
   },
   {
     id: 'prj-shuttle',
-    owner_id: 'usr-aiman',
-    title: 'Smart Shuttle UMS',
+    owner_id: 'ums-club-fkj',
+    title: 'UMS Autonomous Shuttle & Solar IoT Telemetry',
     description:
-      'Pembangunan aplikasi telemetri bas kampus masa nyata antara Kolej Kediaman E dan blok kuliah FKI/FKJ UMS.',
-    project_type: 'Innovation',
-    slots_needed: 3,
-    min_weekly_hours: 6,
-    status: 'open',
-    deadline: '2026-11-28',
-    date_display: '18 – 28 Nov 2026',
-    location: 'Kolej Kediaman E & FKI, UMS',
-    audience: 'Terbuka kepada semua pelajar UMS',
-    badge_line_1: 'Inovasi',
-    badge_line_2: 'Kampus',
-    tags: ['Tech', 'Networking', 'Competition'],
-    attribute_tags: ['Programming', 'Database', 'Planning'],
-    trending: true,
-    organizer_name: 'Fahrin (Kelab Inovasi FKI)',
-    organizer_phone: '+6013-880 2145',
-    created_at: '2026-10-20T09:00:00Z',
-    updated_at: '2026-11-02T11:30:00Z',
-  },
-  {
-    id: 'prj-reef',
-    owner_id: 'usr-keith',
-    title: 'Borneo Reef AI 2026',
-    description:
-      'Analisis akustik terumbu karang Teluk Sepanggar menggunakan model pembelajaran mesin Python dan visualisasi web.',
-    project_type: 'Competition',
-    slots_needed: 2,
-    min_weekly_hours: 5,
-    status: 'open',
-    deadline: '2026-12-10',
-    date_display: '02 – 10 Dec 2026',
-    location: 'Institut Penyelidikan Marin, UMS',
-    audience: 'Terbuka kepada semua pelajar UMS',
-    badge_line_1: 'Projek',
-    badge_line_2: 'Rentas',
-    tags: ['Tech', 'Networking', 'Competition'],
-    attribute_tags: ['Programming', 'Database'],
-    trending: true,
-    organizer_name: 'Keith Liew (Penyelidik Muda FSSA)',
-    organizer_phone: '+6019-851 7732',
-    created_at: '2026-10-22T14:00:00Z',
-    updated_at: '2026-11-01T16:45:00Z',
-  },
-  {
-    id: 'prj-tamu',
-    owner_id: 'usr-farah',
-    title: 'Sabah Digital Tamu 2026',
-    description:
-      'Platform keusahawanan sosial menghubungkan petani kecil Kundasang dengan koperasi kampus UMS.',
-    project_type: 'Community',
-    slots_needed: 2,
-    min_weekly_hours: 4,
-    status: 'open',
-    deadline: '2026-12-05',
-    date_display: '01 – 05 Dec 2026',
-    location: 'Pusat Keusahawanan FPEP, UMS',
-    audience: 'Terbuka kepada semua pelajar UMS',
-    badge_line_1: 'Komuniti',
-    badge_line_2: 'Sabah',
-    tags: ['Tech', 'Networking', 'Competition'],
-    attribute_tags: ['Planning', 'Extrovert', 'Female only'],
-    trending: false,
-    organizer_name: 'Farah Syuhada (Komuniti Keusahawanan FPEP)',
-    organizer_phone: '+6011-2640 9918',
-    created_at: '2026-10-25T10:20:00Z',
-    updated_at: '2026-11-02T08:15:00Z',
-  },
-  {
-    id: 'prj-cybersec',
-    owner_id: 'usr-daniel',
-    title: 'Borneo CyberSec CTF 2026',
-    description:
-      'Pertandingan Capture The Flag (CTF) keselamatan siber dan bengkel pertahanan rangkaian peringkat universiti di Sabah.',
-    project_type: 'Competition',
-    slots_needed: 3,
-    min_weekly_hours: 6,
-    status: 'open',
-    deadline: '2026-11-29',
-    date_display: '27 – 29 Nov 2026',
-    location: 'Makmal Keselamatan Siber FKI, UMS',
-    audience: 'Terbuka kepada semua pelajar UMS',
-    badge_line_1: 'Siber',
-    badge_line_2: 'FKI UMS',
-    tags: ['Tech', 'Networking', 'Competition'],
-    attribute_tags: ['Programming', 'Database'],
-    trending: true,
-    organizer_name: 'Daniel Wong (Kelab Keselamatan Siber FKI)',
-    organizer_phone: '+6016-832 5501',
-    created_at: '2026-10-28T09:00:00Z',
-    updated_at: '2026-11-03T10:00:00Z',
-  },
-  {
-    id: 'prj-greeniot',
-    owner_id: 'usr-izzah',
-    title: 'Kinabalu Green Campus IoT',
-    description:
-      'Projek sensor pintar pemantauan kualiti udara dan tenaga solar sekitar perpustakaan dan kolej kediaman UMS.',
+      'Projek inovasi kejuruteraan dan perisian untuk menjejak ketibaan bas kolej kediaman UMS secara masa nyata menggunakan modul GPS ESP32 berkuasa solar dan papan pemuka mudah alih.',
     project_type: 'Innovation',
     slots_needed: 4,
     min_weekly_hours: 5,
     status: 'open',
-    deadline: '2026-12-12',
-    date_display: '05 – 12 Dec 2026',
-    location: 'Perpustakaan UMS & FKJ',
-    audience: 'Terbuka kepada semua pelajar UMS',
-    badge_line_1: 'Lestari',
-    badge_line_2: 'Kampus',
-    tags: ['Tech', 'Networking', 'Innovation'],
-    attribute_tags: ['Programming', 'Planning', 'Database'],
-    trending: false,
-    organizer_name: 'Nurul Izzah (Jawatankuasa EcoCampus UMS)',
-    organizer_phone: '+6014-679 3320',
-    created_at: '2026-10-30T14:00:00Z',
-    updated_at: '2026-11-03T15:00:00Z',
+    deadline: '2026-12-05',
+    date_display: '1 – 5 Dis 2026',
+    location: 'Makmal Mekatronik FKJ & Perhentian Kolej Tun Mustapha, UMS',
+    audience: 'Pelajar FKJ, FKI & peminat IoT / Tenaga Lestari',
+    badge_line_1: 'Inovasi',
+    badge_line_2: 'FKJ · FKI',
+    tags: ['IoT & Robotics', 'Smart Campus', 'Innovation'],
+    attribute_tags: [
+      'Engineering & IoT',
+      'Programming',
+      'Database',
+      'Fleksibel / Hibrid',
+    ],
+    trending: true,
+    organizer_name: 'Sekretariat Inovasi Kejuruteraan (FKJ UMS)',
+    organizer_phone: '+60 19-821 3304',
+    banner_url: null,
+    banner_preset: 'prj-shuttle',
+    banner_position_y: 50,
+    gallery_images: [],
+    created_at: '2026-11-05T11:30:00Z',
+    updated_at: '2026-11-05T11:30:00Z',
   },
-];
-
-// 08. PROJECT_REQUIRED_SKILLS
-export const INITIAL_PROJECT_REQUIRED_SKILLS: ProjectRequiredSkill[] = [
-  // prj-techfest (FKI TechFest 2026) — calibrated for real 40/25/20/15 formula
-  {project_id: 'prj-techfest', skill_id: 'sk-web', mandatory: true, importance: 5}, // Web Development (Fahrin: advanced)
-  {project_id: 'prj-techfest', skill_id: 'sk-14', mandatory: true, importance: 4}, // Database (Fahrin: advanced)
-  {project_id: 'prj-techfest', skill_id: 'sk-01', mandatory: false, importance: 4}, // UI/UX (Fahrin: intermediate)
-  {project_id: 'prj-techfest', skill_id: 'sk-20', mandatory: false, importance: 3}, // Planning
-  // prj-shuttle
-  {project_id: 'prj-shuttle', skill_id: 'sk-web', mandatory: true, importance: 5},
-  {project_id: 'prj-shuttle', skill_id: 'sk-01', mandatory: true, importance: 4},
-  {project_id: 'prj-shuttle', skill_id: 'sk-10', mandatory: false, importance: 4},
-  {project_id: 'prj-shuttle', skill_id: 'sk-git', mandatory: false, importance: 3},
-  // prj-reef
-  {project_id: 'prj-reef', skill_id: 'sk-10', mandatory: true, importance: 5},
-  {project_id: 'prj-reef', skill_id: 'sk-14', mandatory: false, importance: 4},
-  {project_id: 'prj-reef', skill_id: 'sk-01', mandatory: false, importance: 3},
-  // prj-tamu
-  {project_id: 'prj-tamu', skill_id: 'sk-web', mandatory: false, importance: 5},
-  {project_id: 'prj-tamu', skill_id: 'sk-01', mandatory: true, importance: 4},
-  {project_id: 'prj-tamu', skill_id: 'sk-20', mandatory: false, importance: 4},
-  // prj-cybersec
-  {project_id: 'prj-cybersec', skill_id: 'sk-10', mandatory: true, importance: 5},
-  {project_id: 'prj-cybersec', skill_id: 'sk-web', mandatory: false, importance: 4},
-  {project_id: 'prj-cybersec', skill_id: 'sk-14', mandatory: false, importance: 4},
-  // prj-greeniot
-  {project_id: 'prj-greeniot', skill_id: 'sk-10', mandatory: false, importance: 4},
-  {project_id: 'prj-greeniot', skill_id: 'sk-web', mandatory: true, importance: 4},
-  {project_id: 'prj-greeniot', skill_id: 'sk-20', mandatory: false, importance: 4},
-];
-
-// 09. PROJECT_INTERESTS
-export const INITIAL_PROJECT_INTERESTS: ProjectInterest[] = [
-  // prj-techfest (3 of 4 shared with Fahrin -> 19/25 interest score)
-  {project_id: 'prj-techfest', interest_id: 'in-01'}, // Tech
-  {project_id: 'prj-techfest', interest_id: 'in-collab'}, // Project Collab
-  {project_id: 'prj-techfest', interest_id: 'in-learn'}, // Learning
-  {project_id: 'prj-techfest', interest_id: 'in-07'}, // Hackathon
-
-  // prj-shuttle
-  {project_id: 'prj-shuttle', interest_id: 'in-01'},
-  {project_id: 'prj-shuttle', interest_id: 'in-collab'},
-  {project_id: 'prj-shuttle', interest_id: 'in-learn'},
-
-  // prj-reef
-  {project_id: 'prj-reef', interest_id: 'in-01'},
-  {project_id: 'prj-reef', interest_id: 'in-learn'},
-  {project_id: 'prj-reef', interest_id: 'in-06'},
-
-  // prj-tamu
-  {project_id: 'prj-tamu', interest_id: 'in-collab'},
-  {project_id: 'prj-tamu', interest_id: 'in-08'},
-  {project_id: 'prj-tamu', interest_id: 'in-12'},
-
-  // prj-cybersec
-  {project_id: 'prj-cybersec', interest_id: 'in-01'},
-  {project_id: 'prj-cybersec', interest_id: 'in-learn'},
-
-  // prj-greeniot
-  {project_id: 'prj-greeniot', interest_id: 'in-01'},
-  {project_id: 'prj-greeniot', interest_id: 'in-collab'},
-];
-
-// 10. PROJECT_MEETING_SLOTS
-export const INITIAL_PROJECT_MEETING_SLOTS: ProjectMeetingSlot[] = [
-  // prj-techfest: 6h total (Wed 14:00-17:00 = 3h, Sat 10:00-13:00 = 3h). Fahrin overlaps 5.5h -> 16/20 schedule score
-  {id: 'ms-0', project_id: 'prj-techfest', weekday: 3, start_time: '14:00', end_time: '17:00'},
-  {id: 'ms-0b', project_id: 'prj-techfest', weekday: 6, start_time: '10:00', end_time: '13:30'},
-
-  {id: 'ms-1', project_id: 'prj-shuttle', weekday: 3, start_time: '14:30', end_time: '16:30'},
-  {id: 'ms-2', project_id: 'prj-shuttle', weekday: 6, start_time: '10:00', end_time: '12:00'},
-
-  {id: 'ms-3', project_id: 'prj-reef', weekday: 3, start_time: '14:00', end_time: '16:00'},
-  {id: 'ms-4', project_id: 'prj-reef', weekday: 6, start_time: '10:00', end_time: '12:00'},
-
-  {id: 'ms-5', project_id: 'prj-tamu', weekday: 6, start_time: '10:30', end_time: '12:30'},
-  {id: 'ms-6', project_id: 'prj-cybersec', weekday: 5, start_time: '15:00', end_time: '18:00'},
-  {id: 'ms-7', project_id: 'prj-greeniot', weekday: 3, start_time: '14:00', end_time: '16:30'},
-];
-
-// 11. APPLICATIONS
-export const INITIAL_APPLICATIONS: Application[] = [
   {
-    id: 'app-01',
-    project_id: 'prj-shuttle',
-    applicant_id: 'usr-farah',
-    note: 'Hi! Saya dari FPEP ingin membantu bahagian kajian pengguna & pembentangan inovasi.',
-    status: 'pending',
-    created_at: '2026-11-02T11:20:00Z',
-    responded_at: null,
+    id: 'prj-reef',
+    owner_id: 'ums-club-fssa',
+    title: 'Ekspedisi Pemuliharaan Terumbu Karang & Agro-Marin Sepanggar',
+    description:
+      'Program lapangan bersepadu di Teluk Sepanggar untuk pemetaan GIS kesihatan terumbu karang, pensampelan kualiti air makmal, dan bengkel kelestarian ekosistem pantai Sabah.',
+    project_type: 'Community',
+    slots_needed: 6,
+    min_weekly_hours: 4,
+    status: 'open',
+    deadline: '2026-12-12',
+    date_display: '12 – 14 Dis 2026',
+    location: 'Jeti Akuarium & Pusat Marin UMS (IPMB / FSSA), Kota Kinabalu',
+    audience: 'Terbuka kepada pelajar FSSA, FPL, IPMB & sukarelawan UMS',
+    badge_line_1: 'Lapangan',
+    badge_line_2: 'FSSA · FPL',
+    tags: ['Marine & Eco', 'Fieldwork', 'SDP Tinggi'],
+    attribute_tags: [
+      'Sains & Marin',
+      'Kerja Lapangan',
+      'Penyelidikan',
+      'Beginner Friendly',
+      'Rentas Fakulti',
+    ],
+    trending: true,
+    organizer_name: 'Persatuan Sains Marin & Alam Sekitar (FSSA UMS)',
+    organizer_phone: '+60 14-672 9180',
+    banner_url: null,
+    banner_preset: 'prj-reef',
+    banner_position_y: 50,
+    gallery_images: [],
+    created_at: '2026-11-04T14:15:00Z',
+    updated_at: '2026-11-04T14:15:00Z',
+  },
+  {
+    id: 'prj-tamu',
+    owner_id: 'ums-club-fpep',
+    title: 'Kinabalu Social Enterprise & Digital Tamu Pitch 2026',
+    description:
+      'Cabaran keusahawanan sosial dan kewangan digital membantu usahawan mikro Tamu Sabah memasarkan produk tempatan melalui penjenamaan kreatif, unjuran kewangan, dan e-dagang.',
+    project_type: 'Competition',
+    slots_needed: 5,
+    min_weekly_hours: 5,
+    status: 'open',
+    deadline: '2026-11-30',
+    date_display: '28 – 30 Nov 2026',
+    location: 'Auditorium FPEP UMS Kota Kinabalu & Hibrid Kampus Labuan (FKAL)',
+    audience: 'Pelajar FPEP, FKAL, FSSK, FKI & seluruh UMS',
+    badge_line_1: 'Pitching',
+    badge_line_2: 'FPEP · FKAL',
+    tags: ['Startup & Pitch', 'Finance & Biz', 'Networking'],
+    attribute_tags: [
+      'Perniagaan & Tajaan',
+      'Planning',
+      'Media & Kreatif',
+      'Extrovert',
+      'Fleksibel / Hibrid',
+    ],
+    trending: true,
+    organizer_name: 'Kelab Keusahawanan & Kewangan (FPEP / FKAL UMS)',
+    organizer_phone: '+60 16-830 5521',
+    banner_url: null,
+    banner_preset: 'prj-tamu',
+    banner_position_y: 50,
+    gallery_images: [],
+    created_at: '2026-11-03T16:45:00Z',
+    updated_at: '2026-11-03T16:45:00Z',
+  },
+  {
+    id: 'prj-greeniot',
+    owner_id: 'ums-club-fpsk',
+    title: 'Kem Kesihatan Komuniti, Gizi Seimbang & Minda Sejahtera',
+    description:
+      'Misi khidmat masyarakat merangkumi saringan kesihatan asas, pameran pemakanan sihat produk tempatan, serta slot sokongan psikososial dan literasi pendidikan pelajar sekolah.',
+    project_type: 'Community',
+    slots_needed: 8,
+    min_weekly_hours: 4,
+    status: 'open',
+    deadline: '2026-12-18',
+    date_display: '19 – 20 Dis 2026',
+    location: 'Pusat Rawatan Warga FPSK UMS & Dewan Komuniti Menggatal',
+    audience: 'Pelajar FPSK, FSMP, FPP & sukarelawan semua fakulti UMS',
+    badge_line_1: 'Komuniti CSR',
+    badge_line_2: 'FPSK · FSMP · FPP',
+    tags: ['Health & Care', 'Food & Nutrition', 'Community CSR'],
+    attribute_tags: [
+      'Kesihatan & Komuniti',
+      'Planning',
+      'Kerja Lapangan',
+      'Beginner Friendly',
+      'Rentas Fakulti',
+    ],
+    trending: false,
+    organizer_name: 'Sekretariat Sukarelawan Kesihatan & Psikologi UMS',
+    organizer_phone: '+60 11-2684 7740',
+    banner_url: null,
+    banner_preset: 'prj-greeniot',
+    banner_position_y: 50,
+    gallery_images: [],
+    created_at: '2026-11-02T10:20:00Z',
+    updated_at: '2026-11-02T10:20:00Z',
+  },
+  {
+    id: 'prj-cybersec',
+    owner_id: 'ums-club-fssk',
+    title: 'Dokumentari Warisan Budaya Borneo & Bengkel Keselamatan Siber',
+    description:
+      'Tugasan projek rentas disiplin menghasilkan dokumentari pendek kearifan budaya etnik Sabah berserta modul kesedaran keselamatan privasi digital untuk belia kampus.',
+    project_type: 'Assignment',
+    slots_needed: 4,
+    min_weekly_hours: 4,
+    status: 'open',
+    deadline: '2026-12-08',
+    date_display: '3 – 8 Dis 2026',
+    location: 'Studio Media Kreatif FSSK & Galeri Azman Hashim, UMS',
+    audience: 'Pelajar Komunikasi/Sastera (FSSK), FKI & FPP',
+    badge_line_1: 'Media & Siber',
+    badge_line_2: 'FSSK · FKI',
+    tags: ['Media & Creative', 'Culture & Arts', 'Cybersecurity'],
+    attribute_tags: [
+      'Media & Kreatif',
+      'Penyelidikan',
+      'Fleksibel / Hibrid',
+      'Rentas Fakulti',
+    ],
+    trending: false,
+    organizer_name: 'Kolektif Media & Warisan Borneo (FSSK UMS)',
+    organizer_phone: '+60 17-899 1128',
+    banner_url: null,
+    banner_preset: 'prj-cybersec',
+    banner_position_y: 50,
+    gallery_images: [],
+    created_at: '2026-11-01T08:30:00Z',
+    updated_at: '2026-11-01T08:30:00Z',
   },
 ];
 
-// 12. PROJECT_MEMBERS
-export const INITIAL_PROJECT_MEMBERS: ProjectMember[] = [
+export const INITIAL_PROJECT_REQUIRED_SKILLS: ProjectRequiredSkill[] = [
+  // prj-techfest
   {
     project_id: 'prj-techfest',
-    student_id: 'usr-daniel',
-    member_role: 'owner',
-    membership_status: 'active',
-    joined_at: '2026-11-01T08:00:00Z',
+    skill_id: 'sk-web-mobile',
+    mandatory: false,
+    importance: 5,
+  },
+  {
+    project_id: 'prj-techfest',
+    skill_id: 'sk-python-ai',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-techfest',
+    skill_id: 'sk-uiux-figma',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-techfest',
+    skill_id: 'sk-biz-pitching',
+    mandatory: false,
+    importance: 3,
+  },
+
+  // prj-shuttle
+  {
+    project_id: 'prj-shuttle',
+    skill_id: 'sk-iot-embedded',
+    mandatory: false,
+    importance: 5,
   },
   {
     project_id: 'prj-shuttle',
-    student_id: 'usr-aiman',
-    member_role: 'owner',
-    membership_status: 'active',
-    joined_at: '2026-10-20T09:00:00Z',
+    skill_id: 'sk-web-mobile',
+    mandatory: false,
+    importance: 4,
   },
   {
     project_id: 'prj-shuttle',
-    student_id: 'usr-izzah',
-    member_role: 'member',
-    membership_status: 'active',
-    joined_at: '2026-10-26T14:00:00Z',
+    skill_id: 'sk-database-sql',
+    mandatory: false,
+    importance: 3,
+  },
+  {
+    project_id: 'prj-shuttle',
+    skill_id: 'sk-electronics',
+    mandatory: false,
+    importance: 4,
+  },
+
+  // prj-reef
+  {
+    project_id: 'prj-reef',
+    skill_id: 'sk-marine-survey',
+    mandatory: false,
+    importance: 5,
   },
   {
     project_id: 'prj-reef',
-    student_id: 'usr-keith',
-    member_role: 'owner',
-    membership_status: 'active',
-    joined_at: '2026-10-22T14:00:00Z',
+    skill_id: 'sk-gis-mapping',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-reef',
+    skill_id: 'sk-lab-analysis',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-reef',
+    skill_id: 'sk-community-csr',
+    mandatory: false,
+    importance: 3,
+  },
+
+  // prj-tamu
+  {
+    project_id: 'prj-tamu',
+    skill_id: 'sk-biz-pitching',
+    mandatory: false,
+    importance: 5,
   },
   {
     project_id: 'prj-tamu',
-    student_id: 'usr-farah',
-    member_role: 'owner',
-    membership_status: 'active',
-    joined_at: '2026-10-25T10:20:00Z',
+    skill_id: 'sk-finance-acct',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-tamu',
+    skill_id: 'sk-digital-mkt',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-tamu',
+    skill_id: 'sk-graphic-poster',
+    mandatory: false,
+    importance: 3,
+  },
+
+  // prj-greeniot (Kem Kesihatan, Gizi & Psikologi)
+  {
+    project_id: 'prj-greeniot',
+    skill_id: 'sk-health-firstaid',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-greeniot',
+    skill_id: 'sk-food-nutrition',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-greeniot',
+    skill_id: 'sk-peer-counseling',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-greeniot',
+    skill_id: 'sk-event-planning',
+    mandatory: false,
+    importance: 3,
+  },
+
+  // prj-cybersec (Dokumentari Borneo & Siber)
+  {
+    project_id: 'prj-cybersec',
+    skill_id: 'sk-photo-video',
+    mandatory: false,
+    importance: 5,
+  },
+  {
+    project_id: 'prj-cybersec',
+    skill_id: 'sk-video-editing',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-cybersec',
+    skill_id: 'sk-copywriting-mc',
+    mandatory: false,
+    importance: 4,
+  },
+  {
+    project_id: 'prj-cybersec',
+    skill_id: 'sk-cybersecurity',
+    mandatory: false,
+    importance: 3,
   },
 ];
 
-// 13. PROJECT_INVITATIONS
-export const INITIAL_PROJECT_INVITATIONS: ProjectInvitation[] = [
+export const INITIAL_PROJECT_INTERESTS: ProjectInterest[] = [
+  // prj-techfest
+  {project_id: 'prj-techfest', interest_id: 'in-ai-ml'},
+  {project_id: 'prj-techfest', interest_id: 'in-hackathon'},
+  {project_id: 'prj-techfest', interest_id: 'in-smart-iot'},
+
+  // prj-shuttle
+  {project_id: 'prj-shuttle', interest_id: 'in-smart-iot'},
+  {project_id: 'prj-shuttle', interest_id: 'in-renewable-energy'},
+  {project_id: 'prj-shuttle', interest_id: 'in-climate-sdg'},
+
+  // prj-reef
+  {project_id: 'prj-reef', interest_id: 'in-marine-reef'},
+  {project_id: 'prj-reef', interest_id: 'in-climate-sdg'},
+  {project_id: 'prj-reef', interest_id: 'in-biotech-lab'},
+
+  // prj-tamu
+  {project_id: 'prj-tamu', interest_id: 'in-startup-biz'},
+  {project_id: 'prj-tamu', interest_id: 'in-fintech-finance'},
+  {project_id: 'prj-tamu', interest_id: 'in-digital-commerce'},
+  {project_id: 'prj-tamu', interest_id: 'in-borneo-heritage'},
+
+  // prj-greeniot
+  {project_id: 'prj-greeniot', interest_id: 'in-public-health'},
+  {project_id: 'prj-greeniot', interest_id: 'in-nutrition-halal'},
+  {project_id: 'prj-greeniot', interest_id: 'in-mental-health'},
+  {project_id: 'prj-greeniot', interest_id: 'in-rural-csr'},
+
+  // prj-cybersec
+  {project_id: 'prj-cybersec', interest_id: 'in-borneo-heritage'},
+  {project_id: 'prj-cybersec', interest_id: 'in-film-photography'},
+  {project_id: 'prj-cybersec', interest_id: 'in-cyber-cloud'},
+];
+
+export const INITIAL_PROJECT_MEETING_SLOTS: ProjectMeetingSlot[] = [
   {
-    id: 'inv-01',
+    id: 'ms-techfest-1',
     project_id: 'prj-techfest',
-    inviter_id: 'usr-daniel',
-    invitee_id: 'usr-aiman',
-    note: 'Salam Fahrin! Profil Web Development & Database anda mendapat padanan 78% (High Match) untuk pasukan pameran utama FKI TechFest 2026. Jom sertai kami!',
-    status: 'pending',
-    created_at: '2026-11-03T16:40:00Z',
-    responded_at: null,
-  },
-];
-
-// 14. NOTIFICATIONS (4 notifications for Fahrin matching the badge "4" in the Side Menu)
-export const INITIAL_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: 'notif-01',
-    recipient_id: 'usr-aiman',
-    event_type: 'high_match_alert',
-    target_type: 'project',
-    target_id: 'prj-techfest',
-    title: 'FKI TechFest 2026 — High Match (78%)',
-    body: 'Aktiviti ini sepadan 78% dengan kemahiran Web Development, Database, dan jadual kuliah anda.',
-    read_at: null,
-    created_at: '2026-11-04T08:30:00Z',
+    weekday: 3,
+    start_time: '14:30',
+    end_time: '17:00',
   },
   {
-    id: 'notif-02',
-    recipient_id: 'usr-aiman',
-    event_type: 'project_invitation',
-    target_type: 'invitation',
-    target_id: 'inv-01',
-    title: 'Jemputan Pasukan FKI TechFest 2026',
-    body: 'Daniel Wong menjemput anda menyertai pasukan pameran inovasi di Dewan Canselor UMS.',
-    read_at: null,
-    created_at: '2026-11-03T16:40:00Z',
-  },
-  {
-    id: 'notif-03',
-    recipient_id: 'usr-aiman',
-    event_type: 'sdp_points_verified',
-    target_type: 'project',
-    target_id: 'prj-shuttle',
-    title: 'Mata SDP Dikemas Kini (SDP: 500)',
-    body: 'Rekod penyertaan FKI TechFest 2025 & HackUMS 2025 anda telah disahkan oleh FKI UMS.',
-    read_at: null,
-    created_at: '2026-11-02T11:20:00Z',
-  },
-  {
-    id: 'notif-04',
-    recipient_id: 'usr-aiman',
-    event_type: 'team_workspace_update',
-    target_type: 'project',
-    target_id: 'prj-shuttle',
-    title: 'Mesej Baharu dalam Pasukan Smart Shuttle',
-    body: 'Nurul Izzah telah memuat naik reka bentuk UI/UX baharu untuk semakan.',
-    read_at: null,
-    created_at: '2026-11-01T15:10:00Z',
-  },
-];
-
-// 15. BETA_TEST_RESULTS
-export const INITIAL_BETA_RESULTS: BetaTestResult[] = [
-  {
-    id: 'bt-01',
-    tester_id: 'usr-aiman',
-    task_code: 'T01',
-    success: true,
-    duration_seconds: 85,
-    difficulty_1_to_5: 1,
-    comment: 'Profile & availability slot setup completed smoothly.',
-    created_at: '2026-11-01T09:00:00Z',
-  },
-];
-
-// Extension 16: PROJECT_TASKS
-export const INITIAL_PROJECT_TASKS: ProjectTask[] = [
-  {
-    id: 'tsk-01',
+    id: 'ms-techfest-2',
     project_id: 'prj-techfest',
-    creator_id: 'usr-daniel',
-    assignee_id: 'usr-aiman',
-    title: 'Sediakan prototaip Web & pangkalan data untuk gerai pameran FKI',
-    description: 'Pastikan integrasi API dan paparan responsif siap sebelum 12 Nov 2026.',
-    priority: 'high',
-    status: 'in_progress',
-    due_at: '2026-11-11',
-    created_at: '2026-11-01T10:00:00Z',
-    updated_at: '2026-11-04T09:00:00Z',
-  },
-];
-
-// Extension 17: PROJECT_MESSAGES (2 messages matching the badge "2" in the Side Menu)
-export const INITIAL_PROJECT_MESSAGES: ProjectMessage[] = [
-  {
-    id: 'msg-01',
-    project_id: 'prj-techfest',
-    sender_id: 'usr-izzah',
-    body: 'Salam Fahrin! Jom sertai kumpulan kami untuk FKI TechFest 2026 bahagian Web & Database?',
-    created_at: '2026-11-04T14:15:00Z',
-    edited_at: null,
+    weekday: 5,
+    start_time: '15:30',
+    end_time: '17:30',
   },
   {
-    id: 'msg-02',
-    project_id: 'prj-techfest',
-    sender_id: 'usr-daniel',
-    body: 'Kami perlukan seorang lagi pembangun Frontend & Database untuk pameran di Dewan Canselor.',
-    created_at: '2026-11-03T18:22:00Z',
-    edited_at: null,
+    id: 'ms-shuttle-1',
+    project_id: 'prj-shuttle',
+    weekday: 3,
+    start_time: '15:00',
+    end_time: '17:00',
   },
-];
-
-// Extension 18: SAVED_PROJECTS
-export const INITIAL_SAVED_PROJECTS: SavedProject[] = [
   {
-    student_id: 'usr-aiman',
+    id: 'ms-reef-1',
     project_id: 'prj-reef',
-    saved_at: '2026-11-01T12:00:00Z',
+    weekday: 6,
+    start_time: '08:30',
+    end_time: '12:30',
+  },
+  {
+    id: 'ms-tamu-1',
+    project_id: 'prj-tamu',
+    weekday: 4,
+    start_time: '16:00',
+    end_time: '18:00',
+  },
+  {
+    id: 'ms-tamu-2',
+    project_id: 'prj-tamu',
+    weekday: 6,
+    start_time: '10:00',
+    end_time: '12:00',
+  },
+  {
+    id: 'ms-greeniot-1',
+    project_id: 'prj-greeniot',
+    weekday: 6,
+    start_time: '09:00',
+    end_time: '13:00',
+  },
+  {
+    id: 'ms-cybersec-1',
+    project_id: 'prj-cybersec',
+    weekday: 5,
+    start_time: '15:00',
+    end_time: '17:00',
   },
 ];
 
-// Extension 19: REPORTS
+// ============================================================
+// 6. APPLICATIONS, MEMBERS, INVITATIONS, NOTIFICATIONS & WORKSPACE
+// ============================================================
+export const INITIAL_APPLICATIONS: Application[] = [];
+export const INITIAL_PROJECT_MEMBERS: ProjectMember[] = [];
+export const INITIAL_PROJECT_INVITATIONS: ProjectInvitation[] = [];
+export const INITIAL_NOTIFICATIONS: NotificationItem[] = [];
+export const INITIAL_BETA_RESULTS: BetaTestResult[] = [];
+export const INITIAL_PROJECT_TASKS: ProjectTask[] = [];
+export const INITIAL_PROJECT_MESSAGES: ProjectMessage[] = [];
+export const INITIAL_SAVED_PROJECTS: SavedProject[] = [];
 export const INITIAL_REPORTS: ModerationReport[] = [];
-
-// Extension 20: STUDENT_ACTIVITY_HISTORY (Exact 4 past activities on Fahrin's Profile card totaling 500 SDP)
 export const INITIAL_ACTIVITY_HISTORY: StudentActivityHistory[] = [
   {
-    id: 'hist-1',
-    student_id: 'usr-aiman',
-    project_id: 'prj-techfest',
-    title: 'FKI TechFest 2025',
-    date_display: '15 – 17 Nov 2025',
-    role: 'Exco Teknikal & Peserta Pameran',
-    sdp_earned: 150,
+    id: 'hist-seed-1',
+    student_id: 'usr-admin',
+    project_id: null,
+    title: ' Minggu Suai Mesra & Bengkel Inovasi Perisian FKI UMS',
+    date_display: 'Okt 2026',
+    role: 'AJK Teknikal & Fasilitator',
+    sdp_earned: 45,
     summary:
-      'Mempamerkan prototaip aplikasi kampus pintar dan menguruskan bengkel pembangunan web moden di Dewan Canselor UMS.',
-    completed_at: '2025-11-17T18:00:00Z',
+      'Menyelaras bengkel pembangunan web asas dan sistem pendaftaran QR untuk 180 pelajar baharu FKI UMS.',
+    completed_at: '2026-10-18T10:00:00Z',
   },
   {
-    id: 'hist-2',
-    student_id: 'usr-aiman',
+    id: 'hist-seed-2',
+    student_id: 'usr-admin',
     project_id: null,
-    title: 'UMS Open Day',
-    date_display: '28 – 29 Sep 2025',
-    role: 'Sukarelawan Duta Mahasiswa FKI',
-    sdp_earned: 120,
+    title: 'Program Lestari Pantai ODEC & Sukarelawan Kampus Hijau',
+    date_display: 'Sep 2026',
+    role: 'Peserta Sukarelawan',
+    sdp_earned: 30,
     summary:
-      'Membantu sesi taklimat pelawat dan demonstrasi projek pelajar Kejuruteraan Perisian kepada pelajar sekolah menengah Sabah.',
-    completed_at: '2025-09-29T17:00:00Z',
-  },
-  {
-    id: 'hist-3',
-    student_id: 'usr-aiman',
-    project_id: null,
-    title: 'HackUMS 2025',
-    date_display: '12 – 14 Jul 2025',
-    role: 'Finalis Top 5 (Full-Stack Developer)',
-    sdp_earned: 150,
-    summary:
-      'Membangunkan sistem pemantauan jadual bas kampus bersama pasukan 4 pelajar FKI dalam tempoh 48 jam.',
-    completed_at: '2025-07-14T16:00:00Z',
-  },
-  {
-    id: 'hist-4',
-    student_id: 'usr-aiman',
-    project_id: null,
-    title: 'Web Dev Workshop',
-    date_display: '21 Jun 2025',
-    role: 'Peserta & Fasilitator Kumpulan',
-    sdp_earned: 80,
-    summary:
-      'Bengkel intensif React, Next.js, TypeScript, dan Git & GitHub anjuran Persatuan Mahasiswa FKI (PMFKI).',
-    completed_at: '2025-06-21T16:30:00Z',
+      'Menyertai aktiviti pembersihan pantai ODEC UMS dan audit pengasingan sisa kitar semula bersama pelajar rentas fakulti.',
+    completed_at: '2026-09-22T09:00:00Z',
   },
 ];

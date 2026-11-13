@@ -1,12 +1,27 @@
 'use client';
 
 import React, {useEffect, useMemo, useRef, useState} from 'react';
+import {AnimatePresence, motion} from 'motion/react';
 import {useProjectLink} from '@/lib/store';
-import {evaluateStudentProjectMatch} from '@/lib/matching-engine';
-import { WEEKDAY_SHORT } from '@/lib/seed-data';
+import {
+  evaluateStudentProjectMatch,
+  projectMatchesOfficialFilter,
+} from '@/lib/matching-engine';
+import {
+  getDefaultGalleryForProject,
+  INTEREST_CATEGORIES,
+  OFFICIAL_CARD_HIGHLIGHT_TAGS,
+  OFFICIAL_FILTER_TAGS,
+  SKILL_CATEGORIES,
+  UMS_FACULTY_CODES,
+  WEEKDAY_SHORT,
+} from '@/lib/seed-data';
+import EmailVerificationModal from '@/components/EmailVerificationModal';
 import {
   Proficiency,
   Project,
+  ProjectGalleryItem,
+  ProjectStatus,
   ProjectType,
   StudentActivityHistory,
 } from '@/lib/types';
@@ -17,17 +32,22 @@ import {
   Bell,
   BookOpen,
   Bookmark,
+  RefreshCw,
   Building2,
   Calendar,
   CalendarPlus,
   Camera,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  ZoomIn,
+  ZoomOut,
   Code2,
   Database,
   Eye,
   EyeOff,
+  Flag,
   Flame,
   Gamepad2,
   History,
@@ -47,9 +67,11 @@ import {
   Search,
   Send,
   Settings,
+  ShieldCheck,
   Shuffle,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   Trophy,
   Upload,
   User,
@@ -585,6 +607,7 @@ function ActivityCardBanner({
 export function MainMobileAppInterface() {
   const {
     currentUser,
+    isAdmin,
     profiles,
     skills,
     studentSkills,
@@ -601,6 +624,7 @@ export function MainMobileAppInterface() {
     projectTasks,
     projectMessages,
     savedProjects,
+    reports,
     activityHistory,
     notifications,
     toasts,
@@ -608,6 +632,7 @@ export function MainMobileAppInterface() {
     switchPersona,
     resetDemoDatabase,
     refreshProjectsFeed,
+    seedStarterActivities,
     updateProfileMetadata,
     toggleFilterTag,
     randomizeFilterTags,
@@ -619,7 +644,11 @@ export function MainMobileAppInterface() {
     removeAvailabilitySlot,
     addActivityHistory,
     createProject,
+    updateProjectDetails,
+    deleteOwnProject,
     updateProjectBanner,
+    addProjectGalleryImage,
+    removeProjectGalleryImage,
     applyToProject,
     decideApplication,
     withdrawApplication,
@@ -633,29 +662,37 @@ export function MainMobileAppInterface() {
     sendMessage,
     markNotificationRead,
     markAllNotificationsRead,
-    registerStudentAccount,
-    signInWithCredentials,
+    submitReport,
+    resolveReport,
+    adminDeleteProject,
+    adminUpdateProjectStatus,
+    adminDeleteUser,
+    authSessionToken,
+    loginWithApi,
+    registerWithApi,
+    initiateSignUpWithApi,
+    verifySignUpCodeWithApi,
+    resendVerificationCodeWithApi,
+    initiatePasswordResetWithApi,
+    resetPasswordWithApi,
+    logoutWithApi,
   } = useProjectLink();
 
   // =========================================================
-  // 3-STAGE AUTHENTICATION FLOW STATE (Splash -> Welcome -> Sign In / Sign Up -> Authenticated)
+  // 3-STAGE AUTHENTICATION FLOW STATE (Splash -> Welcome -> Sign In / Sign Up / Forgot Password -> Authenticated)
   // =========================================================
   const [authStage, setAuthStage] = useState<
-    'splash' | 'welcome' | 'signin' | 'signup' | 'authenticated'
-  >(() => {
-    if (typeof window !== 'undefined') {
-      const savedSession = window.sessionStorage.getItem(
-        'projectlink_auth_session_v1'
-      );
-      if (savedSession === 'authenticated') {
-        return 'authenticated';
-      }
-    }
-    return 'splash';
-  });
+    | 'splash'
+    | 'welcome'
+    | 'signin'
+    | 'signup'
+    | 'forgot-password'
+    | 'authenticated'
+  >('splash');
+  const [isExpandedCanvas, setIsExpandedCanvas] = useState(false);
 
-  // Form states for Stage 3: Sign In & Sign Up (Email + Extra Student Details)
-  const [loginEmail, setLoginEmail] = useState('fahrin@student.ums.edu.my');
+  // Form states for Stage 3: Sign In, Sign Up & Reset Password (/api/auth)
+  const [loginEmail, setLoginEmail] = useState('fahrinmuneer3@gmail.com');
   const [loginPassword, setLoginPassword] = useState('ums2026');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
 
@@ -664,6 +701,26 @@ export function MainMobileAppInterface() {
   const [regPassword, setRegPassword] = useState('');
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [regFacultyShort, setRegFacultyShort] = useState('FKI');
+  const [regMatricNo, setRegMatricNo] = useState('');
+  const [regPhone, setRegPhone] = useState('+60 12-883 4910');
+
+  const [resetEmail, setResetEmail] = useState('fahrinmuneer3@gmail.com');
+  const [resetOtpCode, setResetOtpCode] = useState('');
+  const [simulatedResetOtpCode, setSimulatedResetOtpCode] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
+
+  // Pending Email Verification Modal State (triggered immediately after Sign Up)
+  const [isVerifyEmailModalOpen, setIsVerifyEmailModalOpen] = useState(false);
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState('');
+  const [pendingVerifyName, setPendingVerifyName] = useState('');
+  const [pendingVerifyFaculty, setPendingVerifyFaculty] = useState('FKI');
+  const [simulatedVerificationCode, setSimulatedVerificationCode] =
+    useState('');
 
   const UMS_FACULTY_OPTIONS: Array<{short: string; full: string}> = [
     {
@@ -687,8 +744,16 @@ export function MainMobileAppInterface() {
       full: 'Fakulti Perubatan dan Sains Kesihatan (FPSK), UMS',
     },
     {
+      short: 'FSSK',
+      full: 'Fakulti Sains Sosial dan Kemanusiaan (FSSK), UMS',
+    },
+    {
       short: 'FPP',
       full: 'Fakulti Psikologi dan Pendidikan (FPP), UMS',
+    },
+    {
+      short: 'FSMP',
+      full: 'Fakulti Sains Makanan dan Pemakanan (FSMP), UMS',
     },
     {
       short: 'FPL',
@@ -700,16 +765,45 @@ export function MainMobileAppInterface() {
     },
   ];
 
-  // Automatic 1.8s transition from Stage 1 (Splash) to Stage 2 (Welcome)
+  // Automatic transition from Stage 1 (Splash) -> Authenticated (if active session exists) or Stage 2 (Welcome)
   useEffect(() => {
     if (authStage !== 'splash') return;
+    try {
+      const savedSession = window.sessionStorage.getItem(
+        'projectlink_auth_session_v1'
+      );
+      if (savedSession === 'authenticated') {
+        const immediateTimer = window.setTimeout(() => {
+          setAuthStage('authenticated');
+        }, 0);
+        return () => window.clearTimeout(immediateTimer);
+      }
+    } catch {
+      // Ignore sessionStorage read errors
+    }
     const timer = window.setTimeout(() => {
       setAuthStage('welcome');
     }, 1800);
     return () => window.clearTimeout(timer);
   }, [authStage]);
 
+  const switchAuthStage = (
+    nextStage:
+      | 'splash'
+      | 'welcome'
+      | 'signin'
+      | 'signup'
+      | 'forgot-password'
+      | 'authenticated'
+  ) => {
+    setAuthError(null);
+    setAuthSuccess(null);
+    setAuthStage(nextStage);
+  };
+
   const completeAuthentication = () => {
+    setAuthError(null);
+    setAuthSuccess(null);
     setAuthStage('authenticated');
     if (typeof window !== 'undefined') {
       try {
@@ -723,122 +817,261 @@ export function MainMobileAppInterface() {
     }
   };
 
-  const triggerSignOut = () => {
-    if (typeof window !== 'undefined') {
-      try {
-        window.sessionStorage.removeItem('projectlink_auth_session_v1');
-      } catch {
-        // Ignore storage errors
-      }
-    }
+  const triggerSignOut = async () => {
+    await logoutWithApi();
     setIsSidebarOpen(false);
     setActiveSidePage(null);
     setIsSearchPageOpen(false);
     setIsActivityPageOpen(false);
     setIsPostActivityPageOpen(false);
     setActiveModal(null);
-    setAuthStage('splash');
+    setAuthError(null);
+    setAuthSuccess('Anda telah berjaya log keluar daripada sesi akaun.');
+    setAuthStage('welcome');
     notifyToast(
       'Log Keluar Berjaya',
-      'Anda telah kembali ke skrin permulaan ProjectLink UMS.',
+      'Sesi pelayan telah ditamatkan. Sila Sign In semula untuk masuk.',
       'default'
     );
   };
 
-  const handleEmailSignInSubmit = (e: React.FormEvent) => {
+  const handleEmailSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
     if (!loginEmail.trim()) {
-      notifyToast(
-        'E-mel Diperlukan',
-        'Sila masukkan alamat e-mel pelajar UMS atau username anda.',
-        'error'
+      setAuthError('Sila masukkan alamat E-mel UMS atau No. Matrik anda.');
+      return;
+    }
+    if (!loginPassword) {
+      setAuthError('Sila masukkan kata laluan akaun anda.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    const result = await loginWithApi(loginEmail.trim(), loginPassword);
+    setIsSubmittingAuth(false);
+
+    if (!result.ok) {
+      setAuthError(
+        result.error ||
+          'Gagal log masuk. Sila semak semula e-mel dan kata laluan anda.'
       );
       return;
     }
-    if (!loginPassword.trim()) {
-      notifyToast(
-        'Kata Laluan Diperlukan',
-        'Sila masukkan kata laluan akaun anda.',
-        'error'
-      );
-      return;
-    }
-    signInWithCredentials(loginEmail);
     completeAuthentication();
   };
 
-  const handleEmailSignUpSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!regFullName.trim()) {
-      notifyToast(
-        'Nama Penuh Diperlukan',
-        'Sila masukkan nama penuh pelajar anda.',
-        'error'
+  const handleQuickDemoAccountLogin = async (
+    demoEmail: string,
+    demoPass = 'ums2026'
+  ) => {
+    setAuthError(null);
+    setAuthSuccess(null);
+    setLoginEmail(demoEmail);
+    setLoginPassword(demoPass);
+    setIsSubmittingAuth(true);
+    const result = await loginWithApi(demoEmail, demoPass);
+    setIsSubmittingAuth(false);
+    if (!result.ok) {
+      setAuthError(
+        result.error ||
+          'Kata laluan akaun ini mungkin telah ditukar. Sila masukkan kata laluan baharu atau guna Forgot Password?.'
       );
+      return;
+    }
+    completeAuthentication();
+  };
+
+  const handleEmailSignUpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    if (!regFullName.trim() || regFullName.trim().length < 2) {
+      setAuthError('Sila masukkan Nama Penuh pelajar anda.');
       return;
     }
     if (!regEmail.trim() || !regEmail.includes('@')) {
-      notifyToast(
-        'E-mel Tidak Sah',
-        'Sila masukkan alamat e-mel UMS yang sah (contoh: nama@student.ums.edu.my).',
-        'error'
+      setAuthError(
+        'Sila masukkan alamat E-mel UMS yang sah (contoh: nama@student.ums.edu.my).'
       );
       return;
     }
-    if (regPassword.trim().length < 4) {
-      notifyToast(
-        'Kata Laluan Terlalu Pendek',
-        'Sila tetapkan kata laluan sekurang-kurangnya 4 aksara.',
-        'error'
+    if (regPassword.length < 6) {
+      setAuthError(
+        'Kata laluan mestilah sekurang-kurangnya 6 aksara untuk keselamatan akaun.'
       );
       return;
     }
+
     const selectedFac =
       UMS_FACULTY_OPTIONS.find((f) => f.short === regFacultyShort) ||
       UMS_FACULTY_OPTIONS[0];
-    registerStudentAccount({
-      displayName: regFullName,
-      email: regEmail,
+
+    setIsSubmittingAuth(true);
+    const result = await initiateSignUpWithApi({
+      displayName: regFullName.trim(),
+      email: regEmail.trim(),
+      password: regPassword,
       facultyShort: selectedFac.short,
       facultyFull: selectedFac.full,
+      matricNo: regMatricNo.trim() || undefined,
+      phone: regPhone.trim() || '+60 12-883 4910',
     });
-    completeAuthentication();
+    setIsSubmittingAuth(false);
+
+    if (!result.ok) {
+      setAuthError(
+        result.error ||
+          'Pendaftaran tidak berjaya. Sila semak maklumat yang diisi.'
+      );
+      return;
+    }
+
+    setPendingVerifyEmail(result.email || regEmail.trim().toLowerCase());
+    setPendingVerifyName(regFullName.trim());
+    setPendingVerifyFaculty(selectedFac.short);
+    setSimulatedVerificationCode(result.verificationCode || '');
+    setIsVerifyEmailModalOpen(true);
   };
 
-  // Strictly 2 main pages: 'home' | 'profile', plus dedicated full-screen Search, Activity Detail, Post Activity & Side Menu pages
-  const [activeTab, setActiveTab] = useState<'home' | 'profile'>('home');
+  const handleRequestResetOtp = async () => {
+    setAuthError(null);
+    setAuthSuccess(null);
+    if (!resetEmail.trim()) {
+      setAuthError('Sila masukkan alamat E-mel UMS atau No. Matrik akaun anda.');
+      return;
+    }
+    setIsSubmittingAuth(true);
+    const res = await initiatePasswordResetWithApi(resetEmail.trim());
+    setIsSubmittingAuth(false);
+    if (!res.ok) {
+      setAuthError(res.error || 'Gagal menjana kod OTP reset kata laluan.');
+      return;
+    }
+    if (res.resetCode) {
+      setSimulatedResetOtpCode(res.resetCode);
+      setResetOtpCode(res.resetCode);
+    }
+    setAuthSuccess(
+      `Kod OTP 6-digit telah dijana (${res.resetCode}). Sila semak kod dan tetapkan kata laluan baharu.`
+    );
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    if (!resetEmail.trim()) {
+      setAuthError('Sila masukkan alamat E-mel UMS atau No. Matrik akaun anda.');
+      return;
+    }
+    if (!resetOtpCode.trim() || resetOtpCode.trim().length !== 6) {
+      setAuthError(
+        'Sila mohon dan masukkan kod OTP 6-digit terlebih dahulu sebelum menukar kata laluan.'
+      );
+      return;
+    }
+    if (resetNewPassword.length < 6) {
+      setAuthError('Kata laluan baharu mestilah sekurang-kurangnya 6 aksara.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    const result = await resetPasswordWithApi(
+      resetEmail.trim(),
+      resetNewPassword,
+      resetOtpCode.trim()
+    );
+    setIsSubmittingAuth(false);
+
+    if (!result.ok) {
+      setAuthError(result.error || 'Gagal menetapkan semula kata laluan.');
+      return;
+    }
+
+    setLoginEmail(resetEmail.trim());
+    setLoginPassword(resetNewPassword);
+    setResetNewPassword('');
+    setResetOtpCode('');
+    setSimulatedResetOtpCode('');
+    setAuthStage('signin');
+    setAuthSuccess(
+      result.message ||
+        'Kata laluan berjaya dikemas kini! Sila tekan Sign In di bawah.'
+    );
+  };
+
+  // Strictly 2 main pages: 'home' | 'activity', plus dedicated full-screen Search, Activity Detail, Post Activity & Side Menu pages
+  const [activeTab, setActiveTab] = useState<'home' | 'activity'>('home');
   const [isSearchPageOpen, setIsSearchPageOpen] = useState(false);
   const [isActivityPageOpen, setIsActivityPageOpen] = useState(false);
   const [isPostActivityPageOpen, setIsPostActivityPageOpen] = useState(false);
   const [activeSidePage, setActiveSidePage] = useState<
     | null
+    | 'profile'
     | 'my-activities'
     | 'saved-activities'
+    | 'history'
     | 'calendar'
     | 'notifications'
     | 'settings'
+    | 'admin-panel'
   >(null);
+
+  // Dedicated Admin Panel State (Accessible only when role === 'admin')
+  const [adminTab, setAdminTab] = useState<'activities' | 'users' | 'reports'>(
+    'activities'
+  );
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [adminReportNotes, setAdminReportNotes] = useState<
+    Record<string, string>
+  >({});
+  const [newReportReason, setNewReportReason] = useState('');
+  const [newReportTargetId, setNewReportTargetId] = useState('prj-techfest');
 
   // Enhanced Search, Filter, Category & Bookmarks State
   const [searchCategory, setSearchCategory] = useState<string>('All');
   const [searchSkillFilters, setSearchSkillFilters] = useState<string[]>([]);
+  const [searchInterestFilters, setSearchInterestFilters] = useState<string[]>(
+    []
+  );
   const [searchFacultyFilter, setSearchFacultyFilter] = useState<string>('All');
   const [searchSortBy, setSearchSortBy] = useState<
     'match' | 'newest' | 'hours' | 'slots'
   >('match');
+  const [homeStrictFilterMode, setHomeStrictFilterMode] =
+    useState<boolean>(false);
+  const [homeFilterQuery, setHomeFilterQuery] = useState<string>('');
+  const [skillPickerCategory, setSkillPickerCategory] =
+    useState<string>('Semua');
+  const [skillPickerQuery, setSkillPickerQuery] = useState<string>('');
+  const [interestPickerCategory, setInterestPickerCategory] =
+    useState<string>('Semua');
+  const [interestPickerQuery, setInterestPickerQuery] = useState<string>('');
   const [savedSearchQuery, setSavedSearchQuery] = useState<string>('');
   const [savedCategoryFilter, setSavedCategoryFilter] = useState<string>('All');
-  const [bookmarkNotes, setBookmarkNotes] = useState<Record<string, string>>({
-    'prj-01': 'Prioriti Utama',
-    'prj-02': 'Ajak Kawan FKI',
-  });
+  const [savedSortBy, setSavedSortBy] = useState<'match' | 'newest' | 'hours'>(
+    'match'
+  );
+  const [bookmarkNotes, setBookmarkNotes] = useState<Record<string, string>>(
+    {}
+  );
 
-  // Form state for adding a new SDP participation record on the My Activities page
+  // Form & Filter state for Student Participation History & SDP page
   const [newHistTitle, setNewHistTitle] = useState('');
   const [newHistDate, setNewHistDate] = useState('Nov 2026');
   const [newHistRole, setNewHistRole] = useState('Peserta / Ahli Pasukan');
   const [newHistSdp, setNewHistSdp] = useState(30);
   const [newHistSummary, setNewHistSummary] = useState('');
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historyRoleFilter, setHistoryRoleFilter] = useState<
+    'all' | 'leadership' | 'participant' | 'high-sdp'
+  >('all');
+  const [isAddHistoryOpen, setIsAddHistoryOpen] = useState(false);
 
   // Pull-to-Refresh State for the Search Page Scrollable Activity List
   const searchScrollRef = useRef<HTMLDivElement | null>(null);
@@ -913,15 +1146,22 @@ export function MainMobileAppInterface() {
   const [activeSidebarItem, setActiveSidebarItem] = useState<string>('Discover');
 
   // Custom App Icon Image state (defaults to /app-icon.png, persisted in localStorage so user can upload their own app icon)
-  const [appIconUrl, setAppIconUrl] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return (
-        window.localStorage.getItem('projectlink_custom_app_icon_v1') ||
-        '/app-icon.png'
+  const [appIconUrl, setAppIconUrl] = useState<string>('/app-icon.png');
+  useEffect(() => {
+    try {
+      const savedIcon = window.localStorage.getItem(
+        'projectlink_custom_app_icon_v1'
       );
+      if (savedIcon && savedIcon !== '/app-icon.png') {
+        const timer = window.setTimeout(() => {
+          setAppIconUrl(savedIcon);
+        }, 0);
+        return () => window.clearTimeout(timer);
+      }
+    } catch {
+      // Ignore storage read errors
     }
-    return '/app-icon.png';
-  });
+  }, []);
   const appIconFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const updateCustomAppIcon = (nextUrl: string) => {
@@ -939,6 +1179,10 @@ export function MainMobileAppInterface() {
   // Active card index & Tinder-style Swipe Physics State on Home page
   // cardIndex increases monotonically (0, 1, 2, 3, 4...) so each card in the 3-card stack keeps its own DOM key
   const [cardIndex, setCardIndex] = useState(0);
+  const [dismissedCardIds, setDismissedCardIds] = useState<string[]>([]);
+  const [lastDismissedCardId, setLastDismissedCardId] = useState<string | null>(
+    null
+  );
   const [inspectedCardId, setInspectedCardId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{x: number; y: number}>({
     x: 0,
@@ -958,6 +1202,7 @@ export function MainMobileAppInterface() {
     | 'edit-profile'
     | 'profile-photo'
     | 'edit-activity-banner'
+    | 'edit-project-info'
     | 'app-icon-settings'
     | 'edit-about'
     | 'add-profile-skill'
@@ -1000,34 +1245,59 @@ export function MainMobileAppInterface() {
   const [newOrganizerName, setNewOrganizerName] = useState('Fahrin (FKI UMS)');
   const [newOrganizerPhone, setNewOrganizerPhone] = useState('+6012-883 4910');
   const [newDesc, setNewDesc] = useState('');
-  const [newTag1, setNewTag1] = useState('Tech');
+  const [newTag1, setNewTag1] = useState('AI & Tech');
   const [newTag2, setNewTag2] = useState('Networking');
   const [newTag3, setNewTag3] = useState('Competition');
-  const [newBannerMode, setNewBannerMode] = useState<
-    'preset' | 'upload' | 'url'
-  >('preset');
+  const [newBannerMode, setNewBannerMode] = useState<'upload' | 'preset'>(
+    'upload'
+  );
   const [newBannerUrl, setNewBannerUrl] = useState<string>('');
   const [newBannerPreset, setNewBannerPreset] =
     useState<string>('prj-techfest');
   const [newBannerPosY, setNewBannerPosY] = useState<number>(50);
-  const [newAttributeTags, setNewAttributeTags] = useState<string[]>([
-    'Programming',
-    'Planning',
-    'Database',
-  ]);
+
+  // Multi-image Poster & Catalog state for Post Activity Page & Activity Detail Page Lightbox
+  const [newDraftGalleryImages, setNewDraftGalleryImages] = useState<
+    ProjectGalleryItem[]
+  >([]);
+
+  // Collapsible section states for Post Activity (03. Syarat Kemahiran is optional & collapsed by default)
+  const [openPostSections, setOpenPostSections] = useState<{
+    s1: boolean;
+    s2: boolean;
+    s3: boolean;
+    s4: boolean;
+    s5: boolean;
+  }>({
+    s1: true,
+    s2: true,
+    s3: false,
+    s4: true,
+    s5: true,
+  });
+
+  const togglePostSection = (key: 's1' | 's2' | 's3' | 's4' | 's5') => {
+    setOpenPostSections((prev) => ({...prev, [key]: !prev[key]}));
+  };
+
+  const [isAddingGalleryOnDetail, setIsAddingGalleryOnDetail] =
+    useState<boolean>(false);
+  const [detailGalleryUrl, setDetailGalleryUrl] = useState<string>('');
+  const [activityDetailTab, setActivityDetailTab] = useState<
+    'semua' | 'butiran' | 'padanan' | 'pasukan'
+  >('semua');
+
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState<number>(1);
+  const lightboxTouchStartXRef = useRef<number | null>(null);
+
+  const [newAttributeTags, setNewAttributeTags] = useState<string[]>([]);
   const [newRequiredSkills, setNewRequiredSkills] = useState<
     Array<{skill_id: string; mandatory: boolean; importance: number}>
-  >([
-    {skill_id: 'sk-web', mandatory: true, importance: 5},
-    {skill_id: 'sk-14', mandatory: false, importance: 4},
-  ]);
-  const [postSelectSkillId, setPostSelectSkillId] = useState<string>('sk-01');
-  const [postSkillMandatory, setPostSkillMandatory] = useState<boolean>(true);
-  const [postSkillImportance, setPostSkillImportance] = useState<number>(4);
-  const [newProjectInterests, setNewProjectInterests] = useState<string[]>([
-    'in-01',
-    'in-collab',
-  ]);
+  >([]);
+  const [postSkillMandatory] = useState<boolean>(false);
+  const [postSkillImportance] = useState<number>(3);
+  const [newProjectInterests, setNewProjectInterests] = useState<string[]>([]);
   const [newMeetingSlots, setNewMeetingSlots] = useState<
     Array<{weekday: number; start_time: string; end_time: string}>
   >([{weekday: 3, start_time: '14:00', end_time: '17:00'}]);
@@ -1051,6 +1321,128 @@ export function MainMobileAppInterface() {
     setIsPostActivityPageOpen(true);
   };
 
+  const applyPostActivityTemplate = (
+    presetKey: 'techfest' | 'shuttle' | 'reef'
+  ) => {
+    const orgName = currentUser
+      ? `${currentUser.display_name} (${currentUser.faculty_short || 'FKI'} UMS)`
+      : 'Fahrin Muneer (FKI UMS)';
+    const orgPhone = currentUser?.phone || '+60 12-883 4910';
+
+    if (presetKey === 'techfest') {
+      setNewTitle('Borneo AI & Smart Campus Hackathon 2026');
+      setNewType('Competition');
+      setNewBadgeLine1('Hackathon');
+      setNewBadgeLine2('FKI · FKJ');
+      setNewDateText('22 – 24 Nov 2026');
+      setNewDeadline('2026-11-24');
+      setNewLocationText('Dewan Kuliah Pusat 2 (DKP 2), UMS');
+      setNewAudience('Terbuka kepada semua pelajar FKI, FKJ & UMS');
+      setNewSlotsNeeded(4);
+      setNewMinWeeklyHours(6);
+      setNewOrganizerName(orgName);
+      setNewOrganizerPhone(orgPhone);
+      setNewDesc(
+        'Pertandingan inovasi AI & kelestarian kampus peringkat UMS Kota Kinabalu. Membina prototaip aplikasi pintar bersama mentor industri.'
+      );
+      setNewTag1('AI & Tech');
+      setNewTag2('Smart Campus');
+      setNewTag3('Competition');
+      setNewBannerMode('preset');
+      setNewBannerPreset('prj-techfest');
+      setNewAttributeTags([
+        'Programming',
+        'AI & Data',
+        'UI/UX Design',
+        'Rentas Fakulti',
+      ]);
+      setNewRequiredSkills([
+        {skill_id: 'sk-web-mobile', mandatory: false, importance: 5},
+        {skill_id: 'sk-python-ai', mandatory: false, importance: 4},
+        {skill_id: 'sk-uiux-figma', mandatory: false, importance: 4},
+      ]);
+      setNewProjectInterests(['in-ai-ml', 'in-hackathon', 'in-smart-iot']);
+    } else if (presetKey === 'shuttle') {
+      setNewTitle('UMS Smart Shuttle Live Tracker (IoT + Mobile)');
+      setNewType('Innovation');
+      setNewBadgeLine1('Inovasi');
+      setNewBadgeLine2('FKJ · FKI');
+      setNewDateText('1 – 5 Dis 2026');
+      setNewDeadline('2026-12-05');
+      setNewLocationText('Makmal IoT FKJ & Perhentian Bas Tun Mustapha, UMS');
+      setNewAudience('Pelajar Kejuruteraan (FKJ) & Komputeran (FKI)');
+      setNewSlotsNeeded(4);
+      setNewMinWeeklyHours(5);
+      setNewOrganizerName(orgName);
+      setNewOrganizerPhone(orgPhone);
+      setNewDesc(
+        'Projek inovasi penjejakan bas kampus UMS secara masa nyata menggunakan GPS ESP32 dan paparan peta interaktif untuk pelajar kolej kediaman.'
+      );
+      setNewTag1('IoT & Robotics');
+      setNewTag2('Smart Campus');
+      setNewTag3('Innovation');
+      setNewBannerMode('preset');
+      setNewBannerPreset('prj-shuttle');
+      setNewAttributeTags([
+        'Engineering & IoT',
+        'Programming',
+        'Database',
+        'Fleksibel / Hibrid',
+      ]);
+      setNewRequiredSkills([
+        {skill_id: 'sk-iot-embedded', mandatory: false, importance: 5},
+        {skill_id: 'sk-web-mobile', mandatory: false, importance: 4},
+      ]);
+      setNewProjectInterests([
+        'in-smart-iot',
+        'in-renewable-energy',
+        'in-climate-sdg',
+      ]);
+    } else {
+      setNewTitle('Sepanggar Bay Coral & Marine GIS Expedition');
+      setNewType('Community');
+      setNewBadgeLine1('Lapangan');
+      setNewBadgeLine2('FSSA · FPL');
+      setNewDateText('12 – 14 Dis 2026');
+      setNewDeadline('2026-12-14');
+      setNewLocationText('Jeti IPMB & Akuarium UMS, Kota Kinabalu');
+      setNewAudience('Terbuka kepada semua fakulti UMS');
+      setNewSlotsNeeded(6);
+      setNewMinWeeklyHours(4);
+      setNewOrganizerName(orgName);
+      setNewOrganizerPhone(orgPhone);
+      setNewDesc(
+        'Kolaborasi lapangan antara FSSA, FPL dan IPMB untuk memantau kesihatan terumbu karang Teluk Sepanggar menggunakan pemetaan GIS dan analisis kualiti air.'
+      );
+      setNewTag1('Marine & Eco');
+      setNewTag2('Fieldwork');
+      setNewTag3('SDP Tinggi');
+      setNewBannerMode('preset');
+      setNewBannerPreset('prj-reef');
+      setNewAttributeTags([
+        'Sains & Marin',
+        'Kerja Lapangan',
+        'Penyelidikan',
+        'Beginner Friendly',
+      ]);
+      setNewRequiredSkills([
+        {skill_id: 'sk-marine-survey', mandatory: false, importance: 5},
+        {skill_id: 'sk-gis-mapping', mandatory: false, importance: 4},
+      ]);
+      setNewProjectInterests([
+        'in-marine-reef',
+        'in-climate-sdg',
+        'in-biotech-lab',
+      ]);
+    }
+
+    notifyToast(
+      'Templat Aktiviti Diisi',
+      'Semua ruangan borang telah diisi mengikut senarai rasmi UMS.',
+      'success'
+    );
+  };
+
   // Profile Photo Studio State (Upload from Device, URL, Zoom 1x-3x, Pan X/Y, or UMS Sunset Illustration)
   const [draftAvatarMode, setDraftAvatarMode] = useState<
     'photo' | 'illustration'
@@ -1072,7 +1464,7 @@ export function MainMobileAppInterface() {
     setActiveModal('profile-photo');
   };
 
-  // Owner-Only Edit Activity Banner Modal State
+  // Author-Only (or Admin) Edit Activity Banner Modal State
   const [editingBannerProjectId, setEditingBannerProjectId] =
     useState<string>('');
   const [editBannerMode, setEditBannerMode] = useState<
@@ -1086,10 +1478,10 @@ export function MainMobileAppInterface() {
   const openEditActivityBannerModal = (projectId: string) => {
     const target = projects.find((p) => p.id === projectId);
     if (!target) return;
-    if (!currentUser || target.owner_id !== currentUser.id) {
+    if (!currentUser || (target.owner_id !== currentUser.id && !isAdmin)) {
       notifyToast(
-        'Hanya Pemilik Boleh Tukar Gambar',
-        'Hanya pemilik atau penganjur asal aktiviti ini dibenarkan menukar gambar poster.',
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) aktiviti ini dibenarkan menukar gambar poster.',
         'error'
       );
       return;
@@ -1109,10 +1501,52 @@ export function MainMobileAppInterface() {
     setActiveModal('edit-activity-banner');
   };
 
-  // Add Skill / Interest / Availability / Task / Message Form States
-  const [newSkillInput, setNewSkillInput] = useState('');
+  // Author-Only (or Admin) Edit Activity Info Modal State
+  const [editingInfoProjectId, setEditingInfoProjectId] = useState<string>('');
+  const [editInfoTitle, setEditInfoTitle] = useState<string>('');
+  const [editInfoType, setEditInfoType] = useState<ProjectType>('Competition');
+  const [editInfoStatus, setEditInfoStatus] = useState<ProjectStatus>('open');
+  const [editInfoDateText, setEditInfoDateText] = useState<string>('');
+  const [editInfoLocation, setEditInfoLocation] = useState<string>('');
+  const [editInfoAudience, setEditInfoAudience] = useState<string>('');
+  const [editInfoSlots, setEditInfoSlots] = useState<number>(4);
+  const [editInfoHours, setEditInfoHours] = useState<number>(6);
+  const [editInfoOrgName, setEditInfoOrgName] = useState<string>('');
+  const [editInfoOrgPhone, setEditInfoOrgPhone] = useState<string>('');
+  const [editInfoDesc, setEditInfoDesc] = useState<string>('');
+
+  const openEditProjectInfoModal = (projectId: string) => {
+    const target = projects.find((p) => p.id === projectId);
+    if (!target) return;
+    if (!currentUser || (target.owner_id !== currentUser.id && !isAdmin)) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) aktiviti ini dibenarkan menyunting maklumat.',
+        'error'
+      );
+      return;
+    }
+    setEditingInfoProjectId(target.id);
+    setEditInfoTitle(target.title);
+    setEditInfoType(target.project_type);
+    setEditInfoStatus(target.status);
+    setEditInfoDateText(
+      target.date_display || target.deadline || '12 – 14 Nov 2026'
+    );
+    setEditInfoLocation(target.location || 'Dewan Canselor, UMS');
+    setEditInfoAudience(
+      target.audience || 'Terbuka kepada semua pelajar UMS'
+    );
+    setEditInfoSlots(target.slots_needed || 4);
+    setEditInfoHours(target.min_weekly_hours || 6);
+    setEditInfoOrgName(target.organizer_name || '');
+    setEditInfoOrgPhone(target.organizer_phone || '+6012-883 4910');
+    setEditInfoDesc(target.description || '');
+    setActiveModal('edit-project-info');
+  };
+
+  // Add Skill / Interest / Availability / Task / Message Form States (Predetermined Taxonomy Only)
   const [newSkillProf, setNewSkillProf] = useState<Proficiency>('intermediate');
-  const [newInterestInput, setNewInterestInput] = useState('');
   const [newSlotDay, setNewSlotDay] = useState<number>(4);
   const [newSlotStart, setNewSlotStart] = useState('14:00');
   const [newSlotEnd, setNewSlotEnd] = useState('16:00');
@@ -1149,16 +1583,9 @@ export function MainMobileAppInterface() {
     setActiveModal('edit-about');
   };
 
-  // Normalized Relational Queries for Current Student (Fahrin)
+  // Normalized Relational Queries for Current Student (Fahrin Muneer)
   const selectedTags = useMemo(
-    () =>
-      currentUser?.active_filter_tags || [
-        'Programming',
-        'Planning',
-        'Database',
-        'Extrovert',
-        'Female only',
-      ],
+    () => currentUser?.active_filter_tags || [],
     [currentUser]
   );
 
@@ -1209,18 +1636,57 @@ export function MainMobileAppInterface() {
   }, [currentUser, activityHistory]);
 
   const totalSdpPoints = useMemo(() => {
-    const sum = myHistoryRecords.reduce((acc, item) => acc + item.sdp_earned, 0);
-    return sum > 0 ? sum : 500;
+    return myHistoryRecords.reduce((acc, item) => acc + item.sdp_earned, 0);
   }, [myHistoryRecords]);
+
+  const filteredHistoryRecords = useMemo(() => {
+    const q = historySearchQuery.trim().toLowerCase();
+    return myHistoryRecords.filter((rec) => {
+      if (q) {
+        const hay =
+          `${rec.title} ${rec.role} ${rec.date_display} ${rec.summary}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (historyRoleFilter === 'leadership') {
+        const r = rec.role.toLowerCase();
+        return (
+          r.includes('pengarah') ||
+          r.includes('ketua') ||
+          r.includes('ajk') ||
+          r.includes('penganjur') ||
+          r.includes('lead') ||
+          r.includes('exco')
+        );
+      }
+      if (historyRoleFilter === 'participant') {
+        const r = rec.role.toLowerCase();
+        return (
+          r.includes('peserta') ||
+          r.includes('ahli') ||
+          r.includes('pembentang') ||
+          r.includes('finalis') ||
+          r.includes('sukarelawan')
+        );
+      }
+      if (historyRoleFilter === 'high-sdp') {
+        return rec.sdp_earned >= 40;
+      }
+      return true;
+    });
+  }, [myHistoryRecords, historySearchQuery, historyRoleFilter]);
 
   // Normalized Projects Catalog for the Home Deck
   const cardsCatalog = useMemo(() => {
     return projects.map((p) => {
       const ownerProfile = profiles.find((pr) => pr.id === p.owner_id);
+      const isProjectOwner = Boolean(
+        currentUser && p.owner_id === currentUser.id
+      );
       return {
         id: p.id,
         ownerId: p.owner_id,
-        isOwner: Boolean(currentUser && p.owner_id === currentUser.id),
+        isOwner: isProjectOwner,
+        canManage: Boolean(isProjectOwner || isAdmin),
         projectObj: p,
         title: p.title,
         dateText: p.date_display || p.deadline || '12 – 14 Nov 2026',
@@ -1243,10 +1709,100 @@ export function MainMobileAppInterface() {
           p.organizer_phone || ownerProfile?.phone || '+6012-883 4910',
       };
     });
-  }, [projects, profiles, currentUser]);
+  }, [projects, profiles, currentUser, isAdmin]);
+
+  // All projects ranked by match score & official filter synergy for Home Deck, Matches modal & Search page
+  const rankedProjectsList = useMemo(() => {
+    if (!currentUser) return [];
+    return projects
+      .map((proj, idx) => ({
+        project: proj,
+        cardIdx: idx,
+        matchedFilterCount: selectedTags.filter((tag) =>
+          projectMatchesOfficialFilter({
+            filterLabel: tag,
+            project: proj,
+            reqSkills: projectRequiredSkills,
+            projInterests: projectInterests,
+            skillsCatalog: skills,
+            interestsCatalog: interests,
+          })
+        ).length,
+        evalResult: evaluateStudentProjectMatch({
+          student: currentUser,
+          project: proj,
+          skillsCatalog: skills,
+          interestsCatalog: interests,
+          studentSkills,
+          projectRequiredSkills,
+          studentInterests,
+          projectInterests,
+          studentSlots: availabilitySlots,
+          projectSlots: projectMeetingSlots,
+          projectMembers,
+          activeFilterTags: selectedTags,
+          requireDiscoveryConsent: false,
+        }),
+      }))
+      .sort((a, b) => {
+        if (selectedTags.length > 0 && b.matchedFilterCount !== a.matchedFilterCount) {
+          return b.matchedFilterCount - a.matchedFilterCount;
+        }
+        return b.evalResult.totalScore - a.evalResult.totalScore;
+      });
+  }, [
+    currentUser,
+    projects,
+    skills,
+    interests,
+    studentSkills,
+    projectRequiredSkills,
+    studentInterests,
+    projectInterests,
+    availabilitySlots,
+    projectMeetingSlots,
+    projectMembers,
+    selectedTags,
+  ]);
+
+  // Active deck prioritizes projects matching selected Home filters + highest match score, and optionally filters strictly
+  const activeDeckCards = useMemo(() => {
+    const rankMap = new Map(
+      rankedProjectsList.map((item, rankIdx) => [
+        item.project.id,
+        {rankIdx, matchedFilterCount: item.matchedFilterCount},
+      ])
+    );
+
+    return cardsCatalog
+      .filter((c) => !dismissedCardIds.includes(c.id))
+      .filter((c) => {
+        if (!homeStrictFilterMode || selectedTags.length === 0) return true;
+        const info = rankMap.get(c.id);
+        return (info?.matchedFilterCount || 0) > 0;
+      })
+      .sort((a, b) => {
+        const ra = rankMap.get(a.id)?.rankIdx ?? 999;
+        const rb = rankMap.get(b.id)?.rankIdx ?? 999;
+        return ra - rb;
+      });
+  }, [
+    cardsCatalog,
+    dismissedCardIds,
+    rankedProjectsList,
+    homeStrictFilterMode,
+    selectedTags,
+  ]);
+
+  const handleToggleHomeFilter = (tagLabel: string) => {
+    toggleFilterTag(tagLabel);
+    setCardIndex(0);
+  };
 
   const currentCard =
-    cardsCatalog[cardIndex % cardsCatalog.length] || cardsCatalog[0];
+    activeDeckCards.length > 0
+      ? activeDeckCards[cardIndex % activeDeckCards.length]
+      : cardsCatalog[0];
   const modalCard = useMemo(
     () =>
       cardsCatalog.find((c) => c.id === inspectedCardId) ||
@@ -1314,45 +1870,6 @@ export function MainMobileAppInterface() {
     selectedTags,
   ]);
 
-  // All projects ranked by match score for the Matches modal & Search page
-  const rankedProjectsList = useMemo(() => {
-    if (!currentUser) return [];
-    return projects
-      .map((proj, idx) => ({
-        project: proj,
-        cardIdx: idx,
-        evalResult: evaluateStudentProjectMatch({
-          student: currentUser,
-          project: proj,
-          skillsCatalog: skills,
-          interestsCatalog: interests,
-          studentSkills,
-          projectRequiredSkills,
-          studentInterests,
-          projectInterests,
-          studentSlots: availabilitySlots,
-          projectSlots: projectMeetingSlots,
-          projectMembers,
-          activeFilterTags: selectedTags,
-          requireDiscoveryConsent: false,
-        }),
-      }))
-      .sort((a, b) => b.evalResult.totalScore - a.evalResult.totalScore);
-  }, [
-    currentUser,
-    projects,
-    skills,
-    interests,
-    studentSkills,
-    projectRequiredSkills,
-    studentInterests,
-    projectInterests,
-    availabilitySlots,
-    projectMeetingSlots,
-    projectMembers,
-    selectedTags,
-  ]);
-
   // Match Breakdown & Deep Relational Details for the currently inspected modalCard (used on Dedicated Activity Detail Page)
   const modalMatchData = useMemo(() => {
     const foundRanked = rankedProjectsList.find(
@@ -1374,38 +1891,20 @@ export function MainMobileAppInterface() {
     return matchData;
   }, [rankedProjectsList, modalCard, matchData]);
 
-  // Normalized Required Skills for modalCard (joined with skills catalog & student's own skills)
-  const modalRequiredSkills = useMemo(() => {
+  // Poster & Catalog Gallery Images for modalCard (used on Dedicated Activity Detail Page & Fullscreen Lightbox)
+  const modalGalleryImages = useMemo<ProjectGalleryItem[]>(() => {
     if (!modalCard) return [];
-    const skillMap = new Map(skills.map((s) => [s.id, s]));
-    const studentSkillSet = new Set(myNormalizedSkills.map((ms) => ms.skill_id));
-    return projectRequiredSkills
-      .filter((prs) => prs.project_id === modalCard.id)
-      .map((prs) => ({
-        skill_id: prs.skill_id,
-        name: skillMap.get(prs.skill_id)?.name || prs.skill_id,
-        category: skillMap.get(prs.skill_id)?.category || 'Technical',
-        mandatory: prs.mandatory,
-        importance: prs.importance,
-        studentHasSkill: studentSkillSet.has(prs.skill_id),
-      }));
-  }, [modalCard, projectRequiredSkills, skills, myNormalizedSkills]);
-
-  // Normalized Interests for modalCard (joined with interests catalog & student's own interests)
-  const modalProjectInterests = useMemo(() => {
-    if (!modalCard) return [];
-    const interestMap = new Map(interests.map((i) => [i.id, i]));
-    const studentInterestSet = new Set(
-      myNormalizedInterests.map((mi) => mi.interest_id)
+    const proj = modalCard.projectObj;
+    if (Array.isArray(proj.gallery_images) && proj.gallery_images.length > 0) {
+      return proj.gallery_images;
+    }
+    return getDefaultGalleryForProject(
+      modalCard.id,
+      modalCard.title,
+      modalCard.locationText,
+      modalCard.dateText
     );
-    return projectInterests
-      .filter((pi) => pi.project_id === modalCard.id)
-      .map((pi) => ({
-        interest_id: pi.interest_id,
-        name: interestMap.get(pi.interest_id)?.name || pi.interest_id,
-        isShared: studentInterestSet.has(pi.interest_id),
-      }));
-  }, [modalCard, projectInterests, interests, myNormalizedInterests]);
+  }, [modalCard]);
 
   // Normalized Weekly Meeting Slots for modalCard
   const modalMeetingSlots = useMemo(() => {
@@ -1438,9 +1937,10 @@ export function MainMobileAppInterface() {
     );
   }, [savedProjects, currentUser, modalCard]);
 
-  // Enriched Search Catalog with live Match Score, Breakdown, Skills & Saved status
+  // Enriched Search Catalog with live Match Score, Breakdown, Official Skills, Official Interests & Saved status
   const enrichedSearchCatalog = useMemo(() => {
     const skillMap = new Map(skills.map((s) => [s.id, s.name]));
+    const interestMap = new Map(interests.map((i) => [i.id, i.name]));
     return cardsCatalog.map((card, idx) => {
       const rankedItem = rankedProjectsList.find(
         (r) => r.project.id === card.id
@@ -1455,6 +1955,12 @@ export function MainMobileAppInterface() {
       const reqSkillNames = projectRequiredSkills
         .filter((prs) => prs.project_id === card.id)
         .map((prs) => skillMap.get(prs.skill_id) || prs.skill_id);
+      const projInterestIds = projectInterests
+        .filter((pi) => pi.project_id === card.id)
+        .map((pi) => pi.interest_id);
+      const projInterestNames = projInterestIds.map(
+        (iid) => interestMap.get(iid) || iid
+      );
       const meetSlotsCount = projectMeetingSlots.filter(
         (ms) => ms.project_id === card.id
       ).length;
@@ -1464,6 +1970,8 @@ export function MainMobileAppInterface() {
         matchScore: score,
         isCardSaved,
         reqSkillNames,
+        projInterestIds,
+        projInterestNames,
         meetSlotsCount,
       };
     });
@@ -1473,7 +1981,9 @@ export function MainMobileAppInterface() {
     currentUser,
     savedProjects,
     skills,
+    interests,
     projectRequiredSkills,
+    projectInterests,
     projectMeetingSlots,
   ]);
 
@@ -1505,7 +2015,15 @@ export function MainMobileAppInterface() {
     );
   };
 
-  // Filtered & Sorted Search Results based on query, category, faculty/location, multi-skill chips, and sort order
+  const toggleSearchInterestChip = (interestId: string) => {
+    setSearchInterestFilters((prev) =>
+      prev.includes(interestId)
+        ? prev.filter((id) => id !== interestId)
+        : [...prev, interestId]
+    );
+  };
+
+  // Filtered & Sorted Search Results based on query, category, all UMS faculties, official skill/filter tags, official interests, and sort order
   const filteredSearchCatalog = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = enrichedSearchCatalog.filter((item) => {
@@ -1518,7 +2036,13 @@ export function MainMobileAppInterface() {
           item.facultyLabel1.toLowerCase().includes(q) ||
           item.facultyLabel2.toLowerCase().includes(q) ||
           item.tags.some((t) => t.toLowerCase().includes(q)) ||
-          item.reqSkillNames.some((sn) => sn.toLowerCase().includes(q));
+          (item.projectObj.attribute_tags || []).some((at) =>
+            at.toLowerCase().includes(q)
+          ) ||
+          item.reqSkillNames.some((sn) => sn.toLowerCase().includes(q)) ||
+          item.projInterestNames.some((inName) =>
+            inName.toLowerCase().includes(q)
+          );
         if (!matchesText) return false;
       }
 
@@ -1537,24 +2061,39 @@ export function MainMobileAppInterface() {
           item.facultyLabel2.toLowerCase().includes(facLower) ||
           item.locationText.toLowerCase().includes(facLower) ||
           item.audienceText.toLowerCase().includes(facLower) ||
-          item.title.toLowerCase().includes(facLower);
+          item.organizerName.toLowerCase().includes(facLower) ||
+          item.title.toLowerCase().includes(facLower) ||
+          item.audienceText.toLowerCase().includes('semua fakulti');
         if (!matchesFaculty) return false;
       }
 
       if (searchSkillFilters.length > 0) {
-        const matchesAllSelectedChips = searchSkillFilters.every((chip) => {
-          const sf = chip.toLowerCase();
+        const matchesAllSelectedChips = searchSkillFilters.every((chip) =>
+          projectMatchesOfficialFilter({
+            filterLabel: chip,
+            project: item.projectObj,
+            reqSkills: projectRequiredSkills,
+            projInterests: projectInterests,
+            skillsCatalog: skills,
+            interestsCatalog: interests,
+          })
+        );
+        if (!matchesAllSelectedChips) return false;
+      }
+
+      if (searchInterestFilters.length > 0) {
+        const matchesInterests = searchInterestFilters.some((targetIntrId) => {
+          const targetObj = interests.find((i) => i.id === targetIntrId);
+          const targetNameLower = targetObj?.name.toLowerCase() || '';
           return (
-            item.tags.some((t) => t.toLowerCase().includes(sf)) ||
-            item.reqSkillNames.some((sn) => sn.toLowerCase().includes(sf)) ||
-            (item.projectObj.attribute_tags || []).some((at) =>
-              at.toLowerCase().includes(sf)
-            ) ||
-            item.description.toLowerCase().includes(sf) ||
-            item.title.toLowerCase().includes(sf)
+            item.projInterestIds.includes(targetIntrId) ||
+            (targetNameLower &&
+              item.projInterestNames.some(
+                (nm) => nm.toLowerCase() === targetNameLower
+              ))
           );
         });
-        if (!matchesAllSelectedChips) return false;
+        if (!matchesInterests) return false;
       }
 
       return true;
@@ -1589,13 +2128,18 @@ export function MainMobileAppInterface() {
     searchCategory,
     searchFacultyFilter,
     searchSkillFilters,
+    searchInterestFilters,
     searchSortBy,
+    projectRequiredSkills,
+    projectInterests,
+    skills,
+    interests,
   ]);
 
-  // Filtered Bookmarks / Saved Activities Catalog for the Saved Activities page
+  // Filtered Bookmarks / Saved Activities Catalog for the Activity page
   const filteredSavedCatalog = useMemo(() => {
     const q = savedSearchQuery.trim().toLowerCase();
-    return enrichedSearchCatalog
+    const filtered = enrichedSearchCatalog
       .filter((item) => item.isCardSaved)
       .filter((item) => {
         if (savedCategoryFilter === 'High Match') {
@@ -1615,112 +2159,32 @@ export function MainMobileAppInterface() {
           );
         }
         return true;
-      })
-      .sort((a, b) => b.matchScore - a.matchScore);
+      });
+
+    return [...filtered].sort((a, b) => {
+      if (savedSortBy === 'match') {
+        return b.matchScore - a.matchScore;
+      }
+      if (savedSortBy === 'newest') {
+        return (
+          new Date(b.projectObj.created_at).getTime() -
+          new Date(a.projectObj.created_at).getTime()
+        );
+      }
+      if (savedSortBy === 'hours') {
+        return (
+          (a.projectObj.min_weekly_hours || 6) -
+          (b.projectObj.min_weekly_hours || 6)
+        );
+      }
+      return 0;
+    });
   }, [
     enrichedSearchCatalog,
     savedSearchQuery,
     savedCategoryFilter,
+    savedSortBy,
     bookmarkNotes,
-  ]);
-
-  // Live 40/25/20/15 Match Score Evaluation for the Draft Activity on the Post Activity Page
-  const liveDraftMatchEval = useMemo(() => {
-    if (!currentUser) {
-      return {
-        totalScore: 78,
-        skillScore: 32,
-        interestScore: 20,
-        scheduleScore: 15,
-        goalScore: 11,
-      };
-    }
-    const draftProject: Project = {
-      id: 'draft-preview',
-      owner_id: currentUser.id,
-      title: newTitle.trim() || 'Aktiviti Baharu Kampus UMS',
-      description:
-        newDesc.trim() ||
-        'Aktiviti dan kolaborasi projek pelajar Universiti Malaysia Sabah (UMS).',
-      project_type: newType,
-      slots_needed: newSlotsNeeded,
-      min_weekly_hours: newMinWeeklyHours,
-      status: 'open',
-      deadline: newDeadline,
-      date_display: newDateText,
-      location: newLocationText,
-      audience: newAudience,
-      badge_line_1: newBadgeLine1,
-      badge_line_2: newBadgeLine2,
-      tags: [
-        newTag1.trim() || 'Tech',
-        newTag2.trim() || 'Networking',
-        newTag3.trim() || newType,
-      ],
-      attribute_tags: newAttributeTags,
-      organizer_name: newOrganizerName,
-      organizer_phone: newOrganizerPhone,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    return evaluateStudentProjectMatch({
-      student: currentUser,
-      project: draftProject,
-      skillsCatalog: skills,
-      interestsCatalog: interests,
-      studentSkills,
-      projectRequiredSkills: newRequiredSkills.map((r) => ({
-        project_id: 'draft-preview',
-        skill_id: r.skill_id,
-        mandatory: r.mandatory,
-        importance: r.importance,
-      })),
-      studentInterests,
-      projectInterests: newProjectInterests.map((interest_id) => ({
-        project_id: 'draft-preview',
-        interest_id,
-      })),
-      studentSlots: availabilitySlots,
-      projectSlots: newMeetingSlots.map((m, idx) => ({
-        id: `draft-ms-${idx}`,
-        project_id: 'draft-preview',
-        weekday: m.weekday,
-        start_time: m.start_time,
-        end_time: m.end_time,
-      })),
-      projectMembers,
-      activeFilterTags: selectedTags,
-      requireDiscoveryConsent: false,
-    });
-  }, [
-    currentUser,
-    studentSkills,
-    studentInterests,
-    availabilitySlots,
-    projectMembers,
-    newTitle,
-    newDesc,
-    newType,
-    newSlotsNeeded,
-    newMinWeeklyHours,
-    newDeadline,
-    newDateText,
-    newLocationText,
-    newAudience,
-    newBadgeLine1,
-    newBadgeLine2,
-    newTag1,
-    newTag2,
-    newTag3,
-    newAttributeTags,
-    newOrganizerName,
-    newOrganizerPhone,
-    newRequiredSkills,
-    newProjectInterests,
-    newMeetingSlots,
-    skills,
-    interests,
-    selectedTags,
   ]);
 
   const isSaved = useMemo(() => {
@@ -1737,31 +2201,56 @@ export function MainMobileAppInterface() {
     ).length;
   }, [notifications, currentUser]);
 
+  // Cycles to the next card without dismissing or bookmarking (used by pagination dots & shuffle)
+  const advanceToNextCard = () => {
+    if (flyOffDir || activeDeckCards.length === 0) return;
+    setCardIndex((prev) => prev + 1);
+  };
+
   const handleRandomize = () => {
-    triggerSwipeRight();
     randomizeFilterTags();
+    setCardIndex(0);
   };
 
-  // Swipe Right -> Front card flies off right & disappears, card behind moves to front in loop
+  // Restores all dismissed cards back into the active Home deck
+  const resetDismissedDeck = () => {
+    setDismissedCardIds([]);
+    setLastDismissedCardId(null);
+    setCardIndex(0);
+    setDragOffset({x: 0, y: 0});
+    notifyToast(
+      'Timbunan Kad Dimuat Semula',
+      'Semua aktiviti kampus kini dipaparkan semula di halaman Home.',
+      'success'
+    );
+  };
+
+  // Restores the most recently dismissed card back to the front of the deck
+  const undoLastDismissedCard = () => {
+    if (!lastDismissedCardId) return;
+    const restoredId = lastDismissedCardId;
+    const nextDismissed = dismissedCardIds.filter((id) => id !== restoredId);
+    const nextDeck = cardsCatalog.filter((c) => !nextDismissed.includes(c.id));
+    const restoredIdx = nextDeck.findIndex((c) => c.id === restoredId);
+    setDismissedCardIds(nextDismissed);
+    setLastDismissedCardId(null);
+    if (restoredIdx >= 0) {
+      setCardIndex(restoredIdx);
+    }
+    notifyToast(
+      'Kad Dikembalikan (Undo)',
+      'Kad terakhir yang dibuang telah dikembalikan ke hadapan timbunan.',
+      'success'
+    );
+  };
+
+  // Swipe Right (SIMPAN & INFO) -> Front card flies off right, saves to Bookmarks & opens the Dedicated Activity Detail Page
   const triggerSwipeRight = () => {
-    if (flyOffDir) return;
-    setIsDraggingCard(false);
-    setFlyOffDir('right');
-    setTimeout(() => {
-      setCardIndex((prev) => prev + 1);
-      setFlyOffDir(null);
-      setDragOffset({x: 0, y: 0});
-    }, 230);
-  };
-
-  // Swipe Left -> Front card flies off left & disappears, card behind moves to front in loop,
-  // AND automatically bookmarks & navigates to the Dedicated Activity Detail Page for the swiped card!
-  const triggerSwipeLeft = () => {
-    if (flyOffDir || !currentCard) return;
+    if (flyOffDir || activeDeckCards.length === 0 || !currentCard) return;
     const swipedCardId = currentCard.id;
     setInspectedCardId(swipedCardId);
     setIsDraggingCard(false);
-    setFlyOffDir('left');
+    setFlyOffDir('right');
     saveProjectOnly(swipedCardId);
     setTimeout(() => {
       setCardIndex((prev) => prev + 1);
@@ -1772,9 +2261,35 @@ export function MainMobileAppInterface() {
     }, 230);
   };
 
+  // Swipe Left (BUANG) -> Front card flies off left & is removed from the current active deck
+  const triggerSwipeLeft = () => {
+    if (flyOffDir || activeDeckCards.length === 0 || !currentCard) return;
+    const dismissedId = currentCard.id;
+    const dismissedTitle = currentCard.title;
+    const currentModIdx = cardIndex % activeDeckCards.length;
+    const nextLength = activeDeckCards.length - 1;
+    setIsDraggingCard(false);
+    setFlyOffDir('left');
+    setTimeout(() => {
+      setDismissedCardIds((prev) =>
+        prev.includes(dismissedId) ? prev : [...prev, dismissedId]
+      );
+      setLastDismissedCardId(dismissedId);
+      setCardIndex(nextLength > 0 ? currentModIdx % nextLength : 0);
+      setFlyOffDir(null);
+      setDragOffset({x: 0, y: 0});
+      notifyToast(
+        'Kad Dibuang dari Senarai Semasa',
+        `"${dismissedTitle}" telah dikeluarkan. Anda boleh muat semula bila-bila masa.`,
+        'default'
+      );
+    }, 230);
+  };
+
   // Opens the Dedicated Full-Screen Activity Detail Page from any section in the app
   const openCardInfoModal = (cardId?: string) => {
     setInspectedCardId(cardId || currentCard?.id || null);
+    setIsAddingGalleryOnDetail(false);
     setActiveModal(null);
     setIsActivityPageOpen(true);
   };
@@ -1896,14 +2411,14 @@ export function MainMobileAppInterface() {
         )}deg) scale(${(1 - dragProgress * 0.025).toFixed(3)})`,
         boxShadow:
           dragOffset.x < -15
-            ? `0 14px 34px rgba(168, 85, 247, ${(
-                0.35 +
+            ? `0 14px 34px rgba(244, 63, 94, ${(
+                0.3 +
                 dragProgress * 0.35
               ).toFixed(2)})`
             : dragOffset.x > 15
-            ? `0 14px 34px rgba(56, 189, 248, ${(
-                0.3 +
-                dragProgress * 0.3
+            ? `0 14px 34px rgba(168, 85, 247, ${(
+                0.35 +
+                dragProgress * 0.35
               ).toFixed(2)})`
             : '0 10px 28px rgba(18,3,48,0.35)',
         transition: 'none',
@@ -1924,53 +2439,273 @@ export function MainMobileAppInterface() {
         transition: 'transform 360ms cubic-bezier(0.34, 1.56, 0.64, 1)',
       };
 
-  const sidebarRole = currentUser?.role_mode || 'STUDENT';
   const availabilityStatus = currentUser?.availability_status || 'Available';
+  const openReportsCount = useMemo(
+    () => reports.filter((r) => r.status === 'open').length,
+    [reports]
+  );
 
   return (
-    <div className="fixed inset-0 h-dvh w-screen overflow-hidden bg-[#13042B] flex items-center justify-center select-none">
+    <div className="fixed inset-0 h-dvh w-screen overflow-hidden bg-gradient-to-br from-[#110329] via-[#1D0646] to-[#0B011C] flex items-center justify-center sm:gap-6 lg:gap-10 sm:p-4 lg:p-8 select-none">
       {/* =========================================================
-          TABLET & LAPTOP BLOCKER (Unusable on >= 640px screens)
+          DESKTOP & TABLET COMPANION STUDIO PANEL (Visible on lg+ screens)
+          Replaces the old screen blocker so laptop/desktop users get a
+          first-class interactive command dock alongside the live mobile app.
          ========================================================= */}
-      <div
-        role="alert"
-        aria-live="assertive"
-        className="hidden sm:flex fixed inset-0 z-[9999] bg-gradient-to-b from-[#1A053B] via-[#2A085E] to-[#110229] text-white flex-col items-center justify-center p-8 text-center cursor-not-allowed select-none"
-      >
-        <div className="max-w-md w-full rounded-[32px] bg-white/10 border border-white/20 backdrop-blur-xl p-8 shadow-[0_24px_80px_rgba(0,0,0,0.65)] flex flex-col items-center space-y-5 pointer-events-none">
-          <div className="w-16 h-16 rounded-2xl bg-[#F5F1FF] flex items-center justify-center shadow-lg">
-            <ProjectLinkPLogo src={appIconUrl} className="w-11 h-11" />
-          </div>
-
-          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-red-500/20 border border-red-400/40 text-red-200 text-xs font-extrabold uppercase tracking-wider">
-            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-            <span>Tablet &amp; Laptop Mode Disabled</span>
-          </div>
-
-          <h1 className="text-2xl font-extrabold font-display tracking-tight text-white">
-            Unusable on Tablet &amp; Laptop
-          </h1>
-
-          <p className="text-sm text-purple-100/85 leading-relaxed">
-            <strong>ProjectLink UMS</strong> direka khas untuk paparan{' '}
-            <strong>Telefon Pintar (Mobile Only)</strong> sahaja dan tidak boleh
-            digunakan pada skrin Tablet atau Laptop.
-          </p>
-
-          <div className="w-full rounded-2xl bg-black/30 border border-white/15 p-4 text-xs text-purple-200/90 space-y-1.5">
-            <div className="font-bold text-white">
-              Sila tukar ke mod Mobile (&lt; 640px):
+      <aside className="hidden lg:flex flex-col justify-between w-[380px] xl:w-[410px] h-[min(92dvh,850px)] rounded-[36px] bg-white/[0.06] border border-white/15 backdrop-blur-2xl p-6 text-white shadow-[0_28px_90px_rgba(0,0,0,0.55)] shrink-0">
+        <div className="space-y-5">
+          {/* Brand Header */}
+          <div className="flex items-center gap-3.5">
+            <div className="w-13 h-13 rounded-2xl bg-[#F5F1FF] flex items-center justify-center shadow-lg shrink-0">
+              <ProjectLinkPLogo src={appIconUrl} className="w-9 h-9" />
             </div>
-            <p className="text-[11.5px] text-purple-200/75">
-              Buka aplikasi ini menggunakan telefon pintar atau tukar paparan
-              pralihat (Preview) kepada saiz <strong>Mobile</strong>.
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-extrabold font-display tracking-tight text-white">
+                  ProjectLink UMS
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/35 text-emerald-300 text-[10px] font-extrabold uppercase tracking-wider">
+                  Live Studio
+                </span>
+              </div>
+              <p className="text-xs text-purple-200/80 truncate">
+                Ekosistem Kolaborasi &amp; Aktiviti Pelajar UMS
+              </p>
+            </div>
+          </div>
+
+          {/* Active User & Session Card */}
+          <div className="rounded-2xl bg-white/[0.08] border border-white/15 p-3.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-purple-300">
+                  Sesi Akaun Semasa
+                </div>
+                <div className="text-sm font-extrabold text-white truncate">
+                  {currentUser?.display_name || 'Fahrin Muneer'}
+                </div>
+                <div className="text-[11px] text-purple-200/80 truncate">
+                  {currentUser?.email || 'fahrinmuneer3@gmail.com'} ·{' '}
+                  {currentUser?.matric_no || 'A2412345'}
+                </div>
+              </div>
+              <span
+                className={`px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase tracking-wider shrink-0 ${
+                  isAdmin
+                    ? 'bg-amber-400/20 border border-amber-300/40 text-amber-200'
+                    : 'bg-purple-500/25 border border-purple-300/30 text-purple-100'
+                }`}
+              >
+                {isAdmin ? 'System Admin' : 'Pelajar UMS'}
+              </span>
+            </div>
+
+            {/* Live Metrics Strip */}
+            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/10 text-center">
+              <div className="rounded-xl bg-black/25 py-2 px-1.5">
+                <div className="text-base font-extrabold font-display text-white tabular-nums">
+                  {projects.length}
+                </div>
+                <div className="text-[10px] text-purple-200/75 font-semibold">
+                  Aktiviti UMS
+                </div>
+              </div>
+              <div className="rounded-xl bg-black/25 py-2 px-1.5">
+                <div className="text-base font-extrabold font-display text-emerald-300 tabular-nums">
+                  {
+                    studentSkills.filter(
+                      (s) => s.student_id === currentUser?.id
+                    ).length
+                  }
+                </div>
+                <div className="text-[10px] text-purple-200/75 font-semibold">
+                  Kemahiran
+                </div>
+              </div>
+              <div className="rounded-xl bg-black/25 py-2 px-1.5">
+                <div className="text-base font-extrabold font-display text-amber-300 tabular-nums">
+                  {applications.length}
+                </div>
+                <div className="text-[10px] text-purple-200/75 font-semibold">
+                  Permohonan
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Studio Shortcuts */}
+          <div className="space-y-2">
+            <div className="text-[10.5px] font-extrabold uppercase tracking-wider text-purple-300 px-1">
+              Navigasi Pantas &amp; Tindakan Sistem
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (authStage !== 'authenticated') {
+                    completeAuthentication();
+                  }
+                  setIsPostActivityPageOpen(false);
+                  setIsActivityPageOpen(false);
+                  setIsSearchPageOpen(false);
+                  setActiveSidePage(null);
+                  setActiveTab('home');
+                }}
+                className="p-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-left transition-colors cursor-pointer"
+              >
+                <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Home Deck</span>
+                </div>
+                <p className="text-[10.5px] text-purple-200/75 mt-0.5">
+                  Kad swipe &amp; skor padanan
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (authStage !== 'authenticated') {
+                    completeAuthentication();
+                  }
+                  openPostActivityPage();
+                }}
+                className="p-3 rounded-2xl bg-[#6215E5]/80 hover:bg-[#6215E5] border border-purple-300/40 text-left transition-colors cursor-pointer"
+              >
+                <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-white stroke-[2.5]" />
+                  <span>Post Aktiviti</span>
+                </div>
+                <p className="text-[10.5px] text-purple-100/85 mt-0.5">
+                  Cipta siaran projek baharu
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (authStage !== 'authenticated') {
+                    completeAuthentication();
+                  }
+                  setIsPostActivityPageOpen(false);
+                  setIsActivityPageOpen(false);
+                  setActiveSidePage(null);
+                  setIsSearchPageOpen(true);
+                }}
+                className="p-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-left transition-colors cursor-pointer"
+              >
+                <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                  <Search className="w-3.5 h-3.5 text-sky-300" />
+                  <span>Carian &amp; Filter</span>
+                </div>
+                <p className="text-[10.5px] text-purple-200/75 mt-0.5">
+                  Teroka ikut fakulti &amp; tag
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (authStage !== 'authenticated') {
+                    completeAuthentication();
+                  }
+                  setIsPostActivityPageOpen(false);
+                  setIsActivityPageOpen(false);
+                  setIsSearchPageOpen(false);
+                  setActiveSidePage(isAdmin ? 'admin-panel' : null);
+                  if (!isAdmin) setActiveTab('activity');
+                }}
+                className="p-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-left transition-colors cursor-pointer"
+              >
+                <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>{isAdmin ? 'Admin Panel' : 'Profil Saya'}</span>
+                </div>
+                <p className="text-[10.5px] text-purple-200/75 mt-0.5">
+                  {isAdmin ? 'Urus aktiviti & pengguna' : 'Kemahiran & rekod SDP'}
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Starter Catalog Helper Card */}
+          <div className="rounded-2xl bg-gradient-to-br from-purple-500/20 via-indigo-500/15 to-emerald-500/15 border border-purple-300/30 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-white">
+                Pemuat Katalog Pantas UMS
+              </span>
+              <span className="text-[10px] font-bold text-emerald-300">
+                1-Klik
+              </span>
+            </div>
+            <p className="text-[11px] text-purple-100/85 leading-relaxed">
+              Muatkan 3 aktiviti kampus UMS lengkap dengan kemahiran, minat, dan
+              slot jadual mingguan untuk menguji enjin padanan 40/25/20/15.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (authStage !== 'authenticated') {
+                  completeAuthentication();
+                }
+                seedStarterActivities();
+                setCardIndex(0);
+              }}
+              className="w-full py-2.5 px-3.5 rounded-xl bg-white text-[#23085A] hover:bg-purple-50 font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4 text-[#6215E5]" />
+              <span>Muat 3 Aktiviti Contoh UMS</span>
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* Single Non-Scrolling App Screen Container (Mobile Only < 640px) */}
-      <div className="sm:hidden relative w-full h-dvh overflow-hidden flex flex-col justify-between bg-gradient-to-b from-[#F5F1FF] via-[#671AE6] via-[48%] to-[#220352]">
+        {/* Footer Info & Responsive Viewport Size Switcher */}
+        <div className="pt-3 border-t border-white/10 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10.5px] font-bold text-purple-200/80">
+              Saiz Paparan Skrin:
+            </span>
+            <div className="flex items-center gap-1 bg-black/30 p-0.5 rounded-xl border border-white/10">
+              <button
+                type="button"
+                onClick={() => setIsExpandedCanvas(false)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                  !isExpandedCanvas
+                    ? 'bg-[#6215E5] text-white shadow-xs'
+                    : 'text-purple-200/75 hover:text-white'
+                }`}
+              >
+                Telefon (420px)
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsExpandedCanvas(true)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                  isExpandedCanvas
+                    ? 'bg-[#6215E5] text-white shadow-xs'
+                    : 'text-purple-200/75 hover:text-white'
+                }`}
+              >
+                Kanvas Lebar
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-purple-200/70">
+            <span>Universiti Malaysia Sabah (UMS)</span>
+            <span className="font-mono text-purple-300">Spring 60fps UI</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* Interactive App Screen Container (Full-bleed on mobile < 640px, responsive phone/tablet frame on >= 640px) */}
+      <div
+        className={`relative w-full h-dvh ${
+          isExpandedCanvas
+            ? 'sm:w-[min(94vw,640px)] lg:w-[580px] xl:w-[640px]'
+            : 'sm:w-[min(94vw,430px)]'
+        } sm:h-[min(94dvh,870px)] sm:rounded-[42px] sm:border-[6px] sm:border-white/15 sm:shadow-[0_28px_90px_rgba(0,0,0,0.75)] transition-[width,height,border-radius] duration-300 ease-out overflow-hidden flex flex-col justify-between bg-gradient-to-b from-[#F5F1FF] via-[#671AE6] via-[48%] to-[#220352] shrink-0`}
+      >
         {/* Non-Intrusive Floating RPC Toast Feedback */}
         {toasts.length > 0 && (
           <div className="absolute top-14 inset-x-5 z-[70] pointer-events-none flex flex-col gap-1.5">
@@ -2002,125 +2737,159 @@ export function MainMobileAppInterface() {
             Stage 2: Welcome Screen (top white logo area + bottom purple curved card with Sign In / Sign Up pills)
             Stage 3: Sign In / Sign Up Screen (purple header + curved white form sheet, Email & UMS Student Details)
            ========================================================= */}
-        {authStage !== 'authenticated' && (
-          <div className="absolute inset-0 z-50 overflow-hidden flex flex-col select-none">
-            {/* -----------------------------------------------------
-                STAGE 1: SPLASH SCREEN (Matches Left Phone in Reference)
-               ----------------------------------------------------- */}
-            {authStage === 'splash' && (
-              <div
-                onClick={() => setAuthStage('welcome')}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    setAuthStage('welcome');
-                  }
-                }}
-                aria-label="Splash Screen - Ketik untuk teruskan ke Welcome"
-                className="relative w-full h-full bg-[#FAF8FF] flex flex-col items-center justify-center overflow-hidden cursor-pointer"
-              >
-                {/* Top-Right Bold Curved Circle Shape (ProjectLink Royal Purple) */}
-                <div className="pointer-events-none absolute -top-14 -right-14 w-48 h-48 rounded-full bg-gradient-to-br from-[#7C3AED] via-[#6315EA] to-[#4311B5] shadow-[0_12px_40px_rgba(99,21,234,0.28)]" />
+        <AnimatePresence mode="wait">
+          {authStage !== 'authenticated' && (
+            <motion.div
+              key="auth-flow-overlay"
+              initial={{opacity: 0, scale: 0.985}}
+              animate={{opacity: 1, scale: 1}}
+              exit={{opacity: 0, scale: 0.95, y: -20}}
+              transition={{type: 'spring', stiffness: 360, damping: 32}}
+              className="absolute inset-0 z-50 overflow-hidden flex flex-col select-none"
+            >
+              <AnimatePresence mode="wait" initial={false}>
+                {/* -----------------------------------------------------
+                    STAGE 1: SPLASH SCREEN (Matches Left Phone in Reference)
+                   ----------------------------------------------------- */}
+                {authStage === 'splash' && (
+                  <motion.div
+                    key="auth-stage-splash"
+                    initial={{opacity: 0, scale: 0.96}}
+                    animate={{opacity: 1, scale: 1}}
+                    exit={{opacity: 0, scale: 1.03, y: -16}}
+                    transition={{type: 'spring', stiffness: 380, damping: 32}}
+                    onClick={() => setAuthStage('welcome')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        setAuthStage('welcome');
+                      }
+                    }}
+                    aria-label="Splash Screen - Ketik untuk teruskan ke Welcome"
+                    className="relative w-full h-full bg-[#FAF8FF] flex flex-col items-center justify-center overflow-hidden cursor-pointer"
+                  >
+                    {/* Top-Right Bold Curved Circle Shape (ProjectLink Royal Purple) */}
+                    <div className="pointer-events-none absolute -top-14 -right-14 w-48 h-48 rounded-full bg-gradient-to-br from-[#7C3AED] via-[#6315EA] to-[#4311B5] shadow-[0_12px_40px_rgba(99,21,234,0.28)]" />
 
-                {/* Bottom-Left Bold Curved Circle Shape (ProjectLink Royal Purple) */}
-                <div className="pointer-events-none absolute -bottom-24 -left-20 w-72 h-72 rounded-full bg-gradient-to-tr from-[#3B098E] via-[#6315EA] to-[#8B5CF6] shadow-[0_-12px_45px_rgba(99,21,234,0.28)]" />
+                    {/* Bottom-Left Bold Curved Circle Shape (ProjectLink Royal Purple) */}
+                    <div className="pointer-events-none absolute -bottom-24 -left-20 w-72 h-72 rounded-full bg-gradient-to-tr from-[#3B098E] via-[#6315EA] to-[#8B5CF6] shadow-[0_-12px_45px_rgba(99,21,234,0.28)]" />
 
-                {/* Center Brand Emblem & Typography */}
-                <div className="relative z-10 flex flex-col items-center text-center px-6 -mt-6">
-                  <div className="w-24 h-24 rounded-[28px] bg-white shadow-[0_14px_34px_rgba(99,21,234,0.16)] border border-purple-100 flex items-center justify-center p-3.5 mb-5">
-                    <ProjectLinkPLogo
-                      src={appIconUrl}
-                      className="w-full h-full rounded-xl"
-                    />
-                  </div>
+                    {/* Center Brand Emblem & Typography */}
+                    <div className="relative z-10 flex flex-col items-center text-center px-6 -mt-6">
+                      <div className="w-24 h-24 rounded-[28px] bg-white shadow-[0_14px_34px_rgba(99,21,234,0.16)] border border-purple-100 flex items-center justify-center p-3.5 mb-5">
+                        <ProjectLinkPLogo
+                          src={appIconUrl}
+                          className="w-full h-full rounded-xl"
+                        />
+                      </div>
 
-                  <div className="text-[36px] font-extrabold font-display tracking-tight leading-none text-[#141132]">
-                    <span>Project</span>
-                    <span className="text-[#6315EA]">Link</span>
-                  </div>
+                      <div className="text-[36px] font-extrabold font-display tracking-tight leading-none text-[#141132]">
+                        <span>Project</span>
+                        <span className="text-[#6315EA]">Link</span>
+                      </div>
 
-                  <div className="mt-2.5 text-[11px] font-bold tracking-[0.38em] text-[#3B3561] uppercase">
-                    U M S &nbsp; C A M P U S
-                  </div>
-                </div>
+                      <div className="mt-2.5 text-[11px] font-bold tracking-[0.38em] text-[#3B3561] uppercase">
+                        U M S &nbsp; C A M P U S
+                      </div>
+                    </div>
 
-                {/* Subtle Stage Progress & Tap Prompt at Bottom-Right */}
-                <div className="absolute bottom-7 right-6 z-10 flex items-center gap-2 text-[10.5px] font-bold text-[#6315EA]/80">
-                  <span>Ketik untuk mula</span>
-                  <ArrowRight className="w-3.5 h-3.5 animate-pulse" />
-                </div>
-              </div>
-            )}
+                    {/* Subtle Stage Progress & Tap Prompt at Bottom-Right */}
+                    <div className="absolute bottom-7 right-6 z-10 flex items-center gap-2 text-[10.5px] font-bold text-[#6315EA]/80">
+                      <span>Ketik untuk mula</span>
+                      <ArrowRight className="w-3.5 h-3.5 animate-pulse" />
+                    </div>
+                  </motion.div>
+                )}
 
-            {/* -----------------------------------------------------
-                STAGE 2: WELCOME SCREEN (Matches Middle Phone in Reference)
-               ----------------------------------------------------- */}
-            {authStage === 'welcome' && (
-              <div className="relative w-full h-full bg-[#FAF8FF] flex flex-col justify-between overflow-hidden">
-                {/* Top White/Lavender Brand Section */}
-                <div className="flex-1 flex flex-col items-center justify-center px-6 pt-8 pb-4 text-center">
-                  <div className="w-22 h-22 rounded-[26px] bg-white shadow-[0_12px_30px_rgba(99,21,234,0.14)] border border-purple-100 flex items-center justify-center p-3 mb-4">
-                    <ProjectLinkPLogo
-                      src={appIconUrl}
-                      className="w-full h-full rounded-xl"
-                    />
-                  </div>
+                {/* -----------------------------------------------------
+                    STAGE 2: WELCOME SCREEN (Matches Middle Phone in Reference)
+                   ----------------------------------------------------- */}
+                {authStage === 'welcome' && (
+                  <motion.div
+                    key="auth-stage-welcome"
+                    initial={{opacity: 0, y: 24, scale: 0.985}}
+                    animate={{opacity: 1, y: 0, scale: 1}}
+                    exit={{opacity: 0, x: -32, scale: 0.98}}
+                    transition={{type: 'spring', stiffness: 380, damping: 34}}
+                    className="relative w-full h-full bg-[#FAF8FF] flex flex-col justify-between overflow-hidden"
+                  >
+                    {/* Top White/Lavender Brand Section */}
+                    <div className="flex-1 flex flex-col items-center justify-center px-6 pt-8 pb-4 text-center">
+                      <div className="w-22 h-22 rounded-[26px] bg-white shadow-[0_12px_30px_rgba(99,21,234,0.14)] border border-purple-100 flex items-center justify-center p-3 mb-4">
+                        <ProjectLinkPLogo
+                          src={appIconUrl}
+                          className="w-full h-full rounded-xl"
+                        />
+                      </div>
 
-                  <div className="text-[34px] font-extrabold font-display tracking-tight leading-none text-[#141132]">
-                    <span>Project</span>
-                    <span className="text-[#6315EA]">Link</span>
-                  </div>
+                      <div className="text-[34px] font-extrabold font-display tracking-tight leading-none text-[#141132]">
+                        <span>Project</span>
+                        <span className="text-[#6315EA]">Link</span>
+                      </div>
 
-                  <div className="mt-2 text-[10.5px] font-bold tracking-[0.36em] text-[#3B3561] uppercase">
-                    U M S &nbsp; C A M P U S
-                  </div>
-                </div>
+                      <div className="mt-2 text-[10.5px] font-bold tracking-[0.36em] text-[#3B3561] uppercase">
+                        U M S &nbsp; C A M P U S
+                      </div>
+                    </div>
 
-                {/* Bottom Rounded Purple Welcome Card */}
-                <div className="relative rounded-t-[40px] bg-gradient-to-br from-[#6E23F7] via-[#5B18E5] to-[#3B0A99] px-7 pt-9 pb-10 text-white shadow-[0_-16px_44px_rgba(59,10,153,0.34)]">
-                  <h1 className="text-[30px] font-extrabold font-display tracking-tight text-white leading-tight">
-                    Welcome
-                  </h1>
+                    {/* Bottom Rounded Purple Welcome Card */}
+                    <div className="relative rounded-t-[40px] bg-gradient-to-br from-[#6E23F7] via-[#5B18E5] to-[#3B0A99] px-7 pt-9 pb-10 text-white shadow-[0_-16px_44px_rgba(59,10,153,0.34)]">
+                      <h1 className="text-[30px] font-extrabold font-display tracking-tight text-white leading-tight">
+                        Welcome
+                      </h1>
 
-                  <p className="mt-3 text-[13px] text-purple-100/90 font-medium leading-relaxed">
-                    Platform rasmi padanan kemahiran, pencarian ahli pasukan projek, dan hebahan aktiviti pelajar Universiti Malaysia Sabah (UMS).
-                  </p>
+                      <p className="mt-3 text-[13px] text-purple-100/90 font-medium leading-relaxed">
+                        Platform rasmi padanan kemahiran, pencarian ahli pasukan projek, dan hebahan aktiviti pelajar Universiti Malaysia Sabah (UMS).
+                      </p>
 
-                  {/* Two Side-by-Side Pill Buttons: Sign In (Dark) & Sign Up (White) */}
-                  <div className="mt-8 grid grid-cols-2 gap-4">
-                    <button
-                      type="button"
-                      onClick={() => setAuthStage('signin')}
-                      className="py-3.5 px-5 rounded-full bg-[#120E2E] hover:bg-[#1D1746] text-white font-extrabold text-[13.5px] shadow-[0_10px_24px_rgba(10,5,30,0.38)] active:scale-95 transition-all cursor-pointer"
-                    >
-                      Sign In
-                    </button>
+                      {/* Two Side-by-Side Pill Buttons: Sign In (Dark) & Sign Up (White) */}
+                      <div className="mt-8 grid grid-cols-2 gap-4">
+                        <button
+                          type="button"
+                          onClick={() => switchAuthStage('signin')}
+                          className="py-3.5 px-5 rounded-full bg-[#120E2E] hover:bg-[#1D1746] text-white font-extrabold text-[13.5px] shadow-[0_10px_24px_rgba(10,5,30,0.38)] active:scale-95 transition-all cursor-pointer"
+                        >
+                          Sign In
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setAuthStage('signup')}
-                      className="py-3.5 px-5 rounded-full bg-white hover:bg-[#F5F1FF] text-[#141132] font-extrabold text-[13.5px] shadow-[0_10px_24px_rgba(18,14,46,0.18)] active:scale-95 transition-all cursor-pointer"
-                    >
-                      Sign Up
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+                        <button
+                          type="button"
+                          onClick={() => switchAuthStage('signup')}
+                          className="py-3.5 px-5 rounded-full bg-white hover:bg-[#F5F1FF] text-[#141132] font-extrabold text-[13.5px] shadow-[0_10px_24px_rgba(18,14,46,0.18)] active:scale-95 transition-all cursor-pointer"
+                        >
+                          Sign Up
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
 
-            {/* -----------------------------------------------------
-                STAGE 3: SIGN IN & SIGN UP SCREEN (Matches Right Phone in Reference)
-               ----------------------------------------------------- */}
-            {(authStage === 'signin' || authStage === 'signup') && (
-              <div className="relative w-full h-full bg-gradient-to-br from-[#6E23F7] via-[#5B18E5] to-[#4311B5] flex flex-col overflow-hidden">
+                {/* -----------------------------------------------------
+                    STAGE 3: SIGN IN, SIGN UP & FORGOT PASSWORD SCREEN (/api/auth)
+                   ----------------------------------------------------- */}
+                {(authStage === 'signin' ||
+                  authStage === 'signup' ||
+                  authStage === 'forgot-password') && (
+                  <motion.div
+                    key={`auth-stage-${authStage}`}
+                    initial={{opacity: 0, x: 36, scale: 0.985}}
+                    animate={{opacity: 1, x: 0, scale: 1}}
+                    exit={{opacity: 0, x: -28, scale: 0.985}}
+                    transition={{type: 'spring', stiffness: 390, damping: 34}}
+                    className="relative w-full h-full bg-gradient-to-br from-[#6E23F7] via-[#5B18E5] to-[#4311B5] flex flex-col overflow-hidden"
+                  >
                 {/* Top Purple Header Bar + Title + Subtitle */}
-                <div className="px-6 pt-5 pb-9 text-white shrink-0">
-                  <div className="flex items-center justify-between mb-5">
+                <div className="px-6 pt-5 pb-8 text-white shrink-0">
+                  <div className="flex items-center justify-between mb-4">
                     <button
                       type="button"
-                      onClick={() => setAuthStage('welcome')}
-                      aria-label="Back to Welcome"
+                      onClick={() =>
+                        switchAuthStage(
+                          authStage === 'forgot-password' ? 'signin' : 'welcome'
+                        )
+                      }
+                      aria-label="Back"
                       className="w-9 h-9 -ml-1.5 rounded-full flex items-center justify-center text-white hover:bg-white/15 active:scale-95 transition-all cursor-pointer"
                     >
                       <ArrowLeft className="w-5 h-5 stroke-[2.3]" />
@@ -2129,80 +2898,114 @@ export function MainMobileAppInterface() {
                     <button
                       type="button"
                       onClick={() =>
-                        setAuthStage(
+                        switchAuthStage(
                           authStage === 'signin' ? 'signup' : 'signin'
                         )
                       }
-                      className="text-[13px] font-extrabold text-white hover:text-purple-200 transition-colors cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-[12px] font-extrabold text-white transition-colors cursor-pointer"
                     >
                       {authStage === 'signin' ? 'Register' : 'Sign In'}
                     </button>
                   </div>
 
-                  <h1 className="text-[30px] font-extrabold font-display tracking-tight text-white leading-tight">
-                    {authStage === 'signin' ? 'Sign In' : 'Sign Up'}
+                  <h1 className="text-[28px] font-extrabold font-display tracking-tight text-white leading-tight">
+                    {authStage === 'signin'
+                      ? 'Sign In'
+                      : authStage === 'signup'
+                      ? 'Sign Up'
+                      : 'Reset Password'}
                   </h1>
 
-                  <p className="mt-2 text-[12.5px] text-purple-100/90 font-medium leading-relaxed max-w-[320px]">
+                  <p className="mt-1.5 text-[12px] text-purple-100/90 font-medium leading-relaxed max-w-[330px]">
                     {authStage === 'signin'
-                      ? 'Log masuk menggunakan e-mel pelajar UMS anda untuk mengakses aktiviti dan padanan projek.'
-                      : 'Daftar akaun pelajar baharu dengan e-mel UMS, nama penuh, dan fakulti pengajian anda.'}
+                      ? 'Log masuk menggunakan E-mel Pelajar UMS atau No. Matrik berserta kata laluan akaun anda.'
+                      : authStage === 'signup'
+                      ? 'Daftar akaun baharu dengan E-mel UMS, Kata Laluan, Nama Penuh, dan Fakulti anda.'
+                      : 'Tetapkan semula kata laluan baharu untuk akaun E-mel UMS anda.'}
                   </p>
                 </div>
 
                 {/* Bottom Curved White Sheet */}
-                <div className="flex-1 bg-[#FAF9FE] rounded-t-[38px] -mt-3 px-6 pt-7 pb-6 flex flex-col justify-between overflow-y-auto no-scrollbar shadow-[0_-14px_38px_rgba(18,6,52,0.28)]">
+                <div className="flex-1 bg-[#FAF9FE] rounded-t-[38px] -mt-3 px-6 pt-6 pb-6 flex flex-col justify-between overflow-y-auto no-scrollbar shadow-[0_-14px_38px_rgba(18,6,52,0.28)]">
+                  {/* Inline Backend Validation Alert Banner */}
+                  {(authError || authSuccess) && (
+                    <div
+                      className={`mb-3.5 rounded-2xl px-4 py-3 text-[11.5px] font-bold leading-snug border ${
+                        authError
+                          ? 'bg-rose-50 border-rose-200 text-rose-700'
+                          : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      }`}
+                    >
+                      {authError || authSuccess}
+                    </div>
+                  )}
+
                   {authStage === 'signin' ? (
                     <>
-                      {/* SIGN IN FORM */}
+                      {/* SIGN IN FORM (Connected to POST /api/auth action: "signin") */}
                       <form
                         onSubmit={handleEmailSignInSubmit}
-                        className="space-y-3.5"
+                        className="space-y-3"
                       >
                         <div>
+                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            E-mel Pelajar UMS atau No. Matrik
+                          </label>
                           <input
                             type="text"
                             value={loginEmail}
-                            onChange={(e) => setLoginEmail(e.target.value)}
-                            placeholder="E-mel UMS / Username (cth: fahrin@student.ums.edu.my)"
+                            onChange={(e) => {
+                              setLoginEmail(e.target.value);
+                              if (authError) setAuthError(null);
+                            }}
+                            placeholder="fahrin@student.ums.edu.my / A2412345"
                             className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3.5 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
                           />
                         </div>
 
-                        <div className="relative">
-                          <input
-                            type={showLoginPassword ? 'text' : 'password'}
-                            value={loginPassword}
-                            onChange={(e) => setLoginPassword(e.target.value)}
-                            placeholder="Password"
-                            className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white pl-5 pr-12 py-3.5 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setShowLoginPassword((prev) => !prev)
-                            }
-                            aria-label="Toggle password visibility"
-                            className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#6315EA] cursor-pointer"
-                          >
-                            {showLoginPassword ? (
-                              <EyeOff className="w-4 h-4" />
-                            ) : (
-                              <Eye className="w-4 h-4" />
-                            )}
-                          </button>
+                        <div>
+                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            Kata Laluan (Password)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showLoginPassword ? 'text' : 'password'}
+                              value={loginPassword}
+                              onChange={(e) => {
+                                setLoginPassword(e.target.value);
+                                if (authError) setAuthError(null);
+                              }}
+                              placeholder="Masukkan kata laluan"
+                              className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white pl-5 pr-12 py-3.5 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowLoginPassword((prev) => !prev)
+                              }
+                              aria-label="Toggle password visibility"
+                              className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#6315EA] cursor-pointer"
+                            >
+                              {showLoginPassword ? (
+                                <EyeOff className="w-4 h-4" />
+                              ) : (
+                                <Eye className="w-4 h-4" />
+                              )}
+                            </button>
+                          </div>
                         </div>
 
-                        <div className="flex justify-end pt-0.5">
+                        <div className="flex items-center justify-between pt-0.5 px-1">
+                          <span className="text-[10.5px] text-slate-400 font-medium">
+                            Kata laluan demo: <code>ums2026</code>
+                          </span>
                           <button
                             type="button"
                             onClick={() => {
-                              setLoginPassword('ums2026');
-                              notifyToast(
-                                ' Bantuan Kata Laluan UMS',
-                                'Kata laluan lalai akaun pelajar telah diisi semula (ums2026).',
-                                'default'
+                              setResetEmail(
+                                loginEmail.trim() || 'fahrin@student.ums.edu.my'
                               );
+                              switchAuthStage('forgot-password');
                             }}
                             className="text-[11.5px] font-bold text-[#141132] hover:text-[#6315EA] transition-colors cursor-pointer"
                           >
@@ -2212,107 +3015,127 @@ export function MainMobileAppInterface() {
 
                         <button
                           type="submit"
-                          className="mt-2 w-full py-4 rounded-full bg-[#120E2E] hover:bg-[#1E1848] text-white font-extrabold text-[14px] shadow-[0_10px_26px_rgba(18,14,46,0.28)] active:scale-[0.99] transition-all cursor-pointer"
+                          disabled={isSubmittingAuth}
+                          className="mt-1 w-full py-3.5 rounded-full bg-[#120E2E] hover:bg-[#1E1848] disabled:opacity-60 text-white font-extrabold text-[14px] shadow-[0_10px_26px_rgba(18,14,46,0.28)] active:scale-[0.99] transition-all cursor-pointer"
                         >
-                          Sign In
+                          {isSubmittingAuth
+                            ? 'Sedang Mengesahkan...'
+                            : 'Sign In'}
                         </button>
                       </form>
 
-                      {/* Bottom Email Account Quick Actions (Replaces Google/Facebook with UMS Email Accounts & Register Card) */}
-                      <div className="pt-5 mt-5 border-t border-slate-200/70 space-y-2.5">
-                        <div className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-400 px-1">
-                          Akses Pantas E-mel Pelajar UMS
+                      {/* Bottom Verified UMS Student Accounts & Sign Up Card */}
+                      <div className="pt-4 mt-4 border-t border-slate-200/70 space-y-2">
+                        <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 px-1">
+                          Akaun Sedia Ada (Klik untuk Log Masuk Terus)
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            switchPersona('usr-aiman');
-                            completeAuthentication();
-                          }}
-                          className="w-full rounded-full bg-white hover:bg-[#F5F1FF] border border-slate-200/80 shadow-[0_6px_20px_rgba(20,17,50,0.06)] px-4 py-3 flex items-center justify-between transition-all cursor-pointer group"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-full bg-[#EFE9FF] text-[#6315EA] flex items-center justify-center shrink-0">
-                              <Mail className="w-4 h-4 stroke-[2.2]" />
-                            </div>
-                            <div className="text-left min-w-0">
-                              <div className="text-[12.5px] font-extrabold text-[#141132] truncate">
-                                Teruskan sebagai Fahrin (FKI)
+                        {[
+                          {
+                            name: 'Fahrin Muneer (Admin Sistem)',
+                            email: 'fahrinmuneer3@gmail.com',
+                          },
+                        ].map((acc) => (
+                          <button
+                            key={acc.email}
+                            type="button"
+                            disabled={isSubmittingAuth}
+                            onClick={() =>
+                              handleQuickDemoAccountLogin(acc.email, 'ums2026')
+                            }
+                            className="w-full rounded-full bg-white hover:bg-[#F5F1FF] border border-slate-200/80 shadow-[0_4px_14px_rgba(20,17,50,0.05)] px-4 py-2.5 flex items-center justify-between transition-all cursor-pointer group"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-7 h-7 rounded-full bg-[#EFE9FF] text-[#6315EA] flex items-center justify-center shrink-0">
+                                <Mail className="w-3.5 h-3.5 stroke-[2.2]" />
                               </div>
-                              <div className="text-[10.5px] text-slate-400 truncate">
-                                fahrin@student.ums.edu.my
+                              <div className="text-left min-w-0">
+                                <div className="text-[12px] font-extrabold text-[#141132] truncate">
+                                  {acc.name}
+                                </div>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                  {acc.email} · Kata laluan: ums2026
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <ArrowRight className="w-4 h-4 text-[#141132] group-hover:translate-x-0.5 transition-transform shrink-0" />
-                        </button>
+                            <ArrowRight className="w-4 h-4 text-[#141132] group-hover:translate-x-0.5 transition-transform shrink-0" />
+                          </button>
+                        ))}
 
                         <button
                           type="button"
-                          onClick={() => setAuthStage('signup')}
-                          className="w-full rounded-full bg-white hover:bg-[#F5F1FF] border border-slate-200/80 shadow-[0_6px_20px_rgba(20,17,50,0.06)] px-4 py-3 flex items-center justify-between transition-all cursor-pointer group"
+                          onClick={() => switchAuthStage('signup')}
+                          className="w-full rounded-full bg-[#F5F0FF] hover:bg-[#EBE0FF] border border-purple-200 px-4 py-2.5 flex items-center justify-between transition-all cursor-pointer group"
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-full bg-[#EFE9FF] text-[#6315EA] flex items-center justify-center shrink-0">
-                              <User className="w-4 h-4 stroke-[2.2]" />
+                            <div className="w-7 h-7 rounded-full bg-[#6315EA] text-white flex items-center justify-center shrink-0">
+                              <User className="w-3.5 h-3.5 stroke-[2.2]" />
                             </div>
                             <div className="text-left min-w-0">
-                              <div className="text-[12.5px] font-extrabold text-[#141132] truncate">
-                                Daftar Akaun E-mel Baharu
+                              <div className="text-[12px] font-extrabold text-[#4C1D95] truncate">
+                                Tiada akaun? Daftar Akaun Baharu (Sign Up)
                               </div>
-                              <div className="text-[10.5px] text-slate-400 truncate">
-                                Nama Penuh, E-mel UMS &amp; Fakulti
+                              <div className="text-[10px] text-[#6315EA]/80 truncate">
+                                Daftar dengan E-mel UMS, Nama Penuh &amp; Fakulti
                               </div>
                             </div>
                           </div>
-                          <ArrowRight className="w-4 h-4 text-[#141132] group-hover:translate-x-0.5 transition-transform shrink-0" />
+                          <ArrowRight className="w-4 h-4 text-[#6315EA] group-hover:translate-x-0.5 transition-transform shrink-0" />
                         </button>
                       </div>
                     </>
-                  ) : (
+                  ) : authStage === 'signup' ? (
                     <>
-                      {/* SIGN UP / REGISTER BY EMAIL + EXTRA DETAILS FORM */}
+                      {/* SIGN UP / REGISTER BY EMAIL + EXTRA DETAILS FORM (Connected to POST /api/auth action: "signup") */}
                       <form
                         onSubmit={handleEmailSignUpSubmit}
-                        className="space-y-3"
+                        className="space-y-2.5"
                       >
                         <div>
-                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
-                            Nama Penuh Pelajar
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            Nama Penuh Pelajar *
                           </label>
                           <input
                             type="text"
                             value={regFullName}
-                            onChange={(e) => setRegFullName(e.target.value)}
-                            placeholder="Contoh: Fahrin Muneer"
+                            onChange={(e) => {
+                              setRegFullName(e.target.value);
+                              if (authError) setAuthError(null);
+                            }}
+                            placeholder="Contoh: Ahmad Zaki bin Ali"
                             className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
-                            E-mel Pelajar UMS
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            E-mel Pelajar UMS *
                           </label>
                           <input
                             type="email"
                             value={regEmail}
-                            onChange={(e) => setRegEmail(e.target.value)}
+                            onChange={(e) => {
+                              setRegEmail(e.target.value);
+                              if (authError) setAuthError(null);
+                            }}
                             placeholder="nama@student.ums.edu.my"
                             className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
-                            Kata Laluan
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            Kata Laluan * (Min. 6 Aksara)
                           </label>
                           <div className="relative">
                             <input
                               type={showRegPassword ? 'text' : 'password'}
                               value={regPassword}
-                              onChange={(e) => setRegPassword(e.target.value)}
-                              placeholder="Minimum 4 aksara"
+                              onChange={(e) => {
+                                setRegPassword(e.target.value);
+                                if (authError) setAuthError(null);
+                              }}
+                              placeholder="Sekurang-kurangnya 6 aksara"
                               className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white pl-5 pr-12 py-3 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
                             />
                             <button
@@ -2333,13 +3156,13 @@ export function MainMobileAppInterface() {
                         </div>
 
                         <div>
-                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
-                            Fakulti UMS (FKI / FKJ / dll)
+                          <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            Fakulti UMS (FKI / FKJ / dll) *
                           </label>
                           <select
                             value={regFacultyShort}
                             onChange={(e) => setRegFacultyShort(e.target.value)}
-                            className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3 text-[12.5px] font-bold text-[#141132] focus:outline-none transition-all cursor-pointer"
+                            className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3 text-[12px] font-bold text-[#141132] focus:outline-none transition-all cursor-pointer"
                           >
                             {UMS_FACULTY_OPTIONS.map((fac) => (
                               <option key={fac.short} value={fac.short}>
@@ -2349,12 +3172,42 @@ export function MainMobileAppInterface() {
                           </select>
                         </div>
 
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                              No. Matrik (Pilihan)
+                            </label>
+                            <input
+                              type="text"
+                              value={regMatricNo}
+                              onChange={(e) => setRegMatricNo(e.target.value)}
+                              placeholder="BI24110123"
+                              className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-4 py-2.5 text-[12px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                              No. WhatsApp
+                            </label>
+                            <input
+                              type="text"
+                              value={regPhone}
+                              onChange={(e) => setRegPhone(e.target.value)}
+                              placeholder="+60 12-883 4910"
+                              className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-4 py-2.5 text-[12px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                          </div>
+                        </div>
+
                         <div className="pt-1.5">
                           <button
                             type="submit"
-                            className="w-full py-3.5 rounded-full bg-[#120E2E] hover:bg-[#1E1848] text-white font-extrabold text-[14px] shadow-[0_10px_26px_rgba(18,14,46,0.28)] active:scale-[0.99] transition-all cursor-pointer"
+                            disabled={isSubmittingAuth}
+                            className="w-full py-3.5 rounded-full bg-[#120E2E] hover:bg-[#1E1848] disabled:opacity-60 text-white font-extrabold text-[14px] shadow-[0_10px_26px_rgba(18,14,46,0.28)] active:scale-[0.99] transition-all cursor-pointer"
                           >
-                            Sign Up &amp; Masuk
+                            {isSubmittingAuth
+                              ? 'Menghantar Kod Pengesahan...'
+                              : 'Sign Up & Sahkan E-mel'}
                           </button>
                         </div>
                       </form>
@@ -2363,7 +3216,7 @@ export function MainMobileAppInterface() {
                       <div className="pt-3 mt-3 border-t border-slate-200/70">
                         <button
                           type="button"
-                          onClick={() => setAuthStage('signin')}
+                          onClick={() => switchAuthStage('signin')}
                           className="w-full rounded-full bg-white hover:bg-[#F5F1FF] border border-slate-200/80 shadow-[0_6px_20px_rgba(20,17,50,0.06)] px-4 py-2.5 flex items-center justify-between transition-all cursor-pointer group"
                         >
                           <div className="flex items-center gap-3">
@@ -2383,12 +3236,155 @@ export function MainMobileAppInterface() {
                         </button>
                       </div>
                     </>
+                  ) : (
+                    <>
+                      {/* FORGOT PASSWORD / RESET PASSWORD FORM (Connected to POST /api/auth action: "initiate_password_reset" + "reset_password") */}
+                      <form
+                        onSubmit={handleResetPasswordSubmit}
+                        className="space-y-3"
+                      >
+                        <div>
+                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            E-mel Pelajar UMS atau No. Matrik
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={resetEmail}
+                              onChange={(e) => {
+                                setResetEmail(e.target.value);
+                                if (authError) setAuthError(null);
+                              }}
+                              placeholder="fahrinmuneer3@gmail.com"
+                              className="flex-1 rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              disabled={isSubmittingAuth}
+                              onClick={handleRequestResetOtp}
+                              className="px-3.5 py-3 rounded-full bg-[#EFE9FF] hover:bg-[#E2D6FF] text-[#6315EA] text-[11px] font-extrabold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                            >
+                              Mohon OTP
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1 px-3">
+                            <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500">
+                              Kod OTP 6-Digit *
+                            </label>
+                            {simulatedResetOtpCode && (
+                              <span className="text-[10px] font-bold text-[#6315EA] tabular-nums">
+                                Kod Semasa: {simulatedResetOtpCode}
+                              </span>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            maxLength={6}
+                            value={resetOtpCode}
+                            onChange={(e) => {
+                              setResetOtpCode(
+                                e.target.value.replace(/[^0-9]/g, '')
+                              );
+                              if (authError) setAuthError(null);
+                            }}
+                            placeholder="Masukkan 6-digit kod OTP"
+                            className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white px-5 py-3 text-[13px] font-bold tracking-widest text-[#141132] placeholder:text-slate-400 placeholder:tracking-normal placeholder:font-medium focus:outline-none transition-all tabular-nums"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1 pl-3">
+                            Kata Laluan Baharu (Min. 6 Aksara)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showResetPassword ? 'text' : 'password'}
+                              value={resetNewPassword}
+                              onChange={(e) => {
+                                setResetNewPassword(e.target.value);
+                                if (authError) setAuthError(null);
+                              }}
+                              placeholder="Masukkan kata laluan baharu"
+                              className="w-full rounded-full bg-[#EFEcf6] border border-transparent focus:border-[#6315EA]/40 focus:bg-white pl-5 pr-12 py-3 text-[13px] font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowResetPassword((prev) => !prev)
+                              }
+                              aria-label="Toggle reset password visibility"
+                              className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#6315EA] cursor-pointer"
+                            >
+                              {showResetPassword ? (
+                                <EyeOff className="w-4 h-4" />
+                              ) : (
+                                <Eye className="w-4 h-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isSubmittingAuth}
+                          className="w-full py-3.5 rounded-full bg-[#120E2E] hover:bg-[#1E1848] disabled:opacity-60 text-white font-extrabold text-[14px] shadow-[0_10px_26px_rgba(18,14,46,0.28)] active:scale-[0.99] transition-all cursor-pointer"
+                        >
+                          {isSubmittingAuth
+                            ? 'Mengemas Kini Kata Laluan...'
+                            : 'Sahkan OTP & Simpan Kata Laluan'}
+                        </button>
+                      </form>
+
+                      <div className="pt-4 mt-4 border-t border-slate-200/70">
+                        <button
+                          type="button"
+                          onClick={() => switchAuthStage('signin')}
+                          className="w-full rounded-full bg-white hover:bg-[#F5F1FF] border border-slate-200/80 px-4 py-3 flex items-center justify-between transition-all cursor-pointer"
+                        >
+                          <span className="text-[12px] font-extrabold text-[#141132]">
+                            ← Kembali ke Skrin Sign In
+                          </span>
+                          <ArrowRight className="w-4 h-4 text-[#141132]" />
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Reusable EmailVerificationModal (Appears immediately after Sign Up submission) */}
+              <EmailVerificationModal
+                key={`${pendingVerifyEmail}-${simulatedVerificationCode}`}
+                isOpen={isVerifyEmailModalOpen}
+                email={pendingVerifyEmail}
+                displayName={pendingVerifyName}
+                facultyShort={pendingVerifyFaculty}
+                simulatedCode={simulatedVerificationCode}
+                onClose={() => setIsVerifyEmailModalOpen(false)}
+                onVerifyCode={(code) =>
+                  verifySignUpCodeWithApi(pendingVerifyEmail, code)
+                }
+                onResendCode={async () => {
+                  const res =
+                    await resendVerificationCodeWithApi(pendingVerifyEmail);
+                  if (res.verificationCode) {
+                    setSimulatedVerificationCode(res.verificationCode);
+                  }
+                  return res;
+                }}
+                onVerifiedSuccess={() => {
+                  setIsVerifyEmailModalOpen(false);
+                  completeAuthentication();
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Decorative Purple Background Waves & Diagonal Glow Streak */}
         <svg
@@ -2423,628 +3419,1038 @@ export function MainMobileAppInterface() {
         </svg>
 
         {/* =========================================================
-            1. TOP BRAND HEADER (Shared by Home & Profile — Hidden on Search, Activity Detail, Post Activity & Side Pages)
+            1. TOP BRAND HEADER (Shared by Home & Activity — Hidden on Search, Activity Detail, Post Activity & Side Pages)
             Clicking the top-left App Icon opens the Side Menu Drawer!
            ========================================================= */}
-        {!isSearchPageOpen &&
-          !isActivityPageOpen &&
-          !isPostActivityPageOpen &&
-          !activeSidePage && (
-            <header className="relative z-20 px-4 pt-3.5 pb-2 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setIsSidebarOpen(true)}
-                aria-label="Open ProjectLink Side Menu"
-                className="flex items-center gap-2 group cursor-pointer text-left focus:outline-none min-w-0"
+        <AnimatePresence initial={false}>
+          {!isSearchPageOpen &&
+            !isActivityPageOpen &&
+            !isPostActivityPageOpen &&
+            !activeSidePage && (
+              <motion.header
+                key="shared-top-brand-header"
+                initial={{opacity: 0, y: -16}}
+                animate={{opacity: 1, y: 0}}
+                exit={{opacity: 0, y: -16}}
+                transition={{type: 'spring', stiffness: 400, damping: 34}}
+                className="relative z-20 px-4 pt-3.5 pb-2 flex items-center justify-between gap-3"
               >
-                <ProjectLinkPLogo
-                  src={appIconUrl}
-                  className="w-8 h-8 rounded-lg shrink-0 transition-transform group-hover:scale-105 group-active:scale-95"
-                />
-                <div className="text-[17.5px] font-extrabold tracking-[-0.02em] font-display leading-none whitespace-nowrap">
-                  <span className="text-[#141132]">ProjectLink </span>
-                  <span className="text-[#6315EA]">UMS</span>
-                </div>
-              </button>
-
-              <div className="flex items-center gap-2.5 text-[#141132] shrink-0">
                 <button
                   type="button"
-                  onClick={() => {
-                    setActiveSidebarItem('Saved Activities');
-                    setActiveSidePage('saved-activities');
-                  }}
-                  aria-label="Open Saved Bookmarks"
-                  className="relative p-1.5 rounded-xl hover:bg-white/50 active:scale-95 transition-all cursor-pointer"
+                  onClick={() => setIsSidebarOpen(true)}
+                  aria-label="Open ProjectLink Side Menu"
+                  className="flex items-center gap-2 group cursor-pointer text-left focus:outline-none min-w-0"
                 >
-                  <Bookmark className="w-[19px] h-[19px] stroke-[2.1]" />
-                  {searchCategoryCounts.Saved > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-[#6315EA] text-white text-[9px] font-extrabold flex items-center justify-center tabular-nums shadow-xs">
-                      {searchCategoryCounts.Saved}
-                    </span>
-                  )}
+                  <ProjectLinkPLogo
+                    src={appIconUrl}
+                    className="w-8 h-8 rounded-lg shrink-0 transition-transform group-hover:scale-105 group-active:scale-95"
+                  />
+                  <div className="text-[17.5px] font-extrabold tracking-[-0.02em] font-display leading-none whitespace-nowrap">
+                    <span className="text-[#141132]">ProjectLink </span>
+                    <span className="text-[#6315EA]">UMS</span>
+                  </div>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveSidebarItem('Notifications');
-                    setActiveSidePage('notifications');
-                  }}
-                  aria-label="Notifications"
-                  className="relative p-1.5 rounded-xl hover:bg-white/50 active:scale-95 transition-all cursor-pointer"
-                >
-                  <Bell className="w-[19.5px] h-[19.5px] stroke-[2.1]" />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#FF3B30] border border-[#F5F1FF]" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsSearchPageOpen(true)}
-                  aria-label="Open Full-Screen Search Page"
-                  className="p-1.5 rounded-xl hover:bg-white/50 active:scale-95 transition-all cursor-pointer"
-                >
-                  <Search className="w-[19.5px] h-[19.5px] stroke-[2.1]" />
-                </button>
-              </div>
-            </header>
-          )}
 
-        {/* =========================================================
-            2. MAIN CONTENT AREA (Activity Detail Page OR Search Page OR Home / Profile)
-           ========================================================= */}
-        {isActivityPageOpen && modalCard ? (
-          /* ---------------------------------------------------------
-             DEDICATED FULL-SCREEN ACTIVITY DETAIL PAGE
-             (No Main Header & No Bottom Navigation — Top-left Back button,
-              deep activity/skills/schedule/match info, and floating bottom-right WhatsApp card)
-             --------------------------------------------------------- */
-          <div className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden">
-            {/* Scrollable Full-Screen Activity Content (padded at bottom for the floating bottom-right WhatsApp card) */}
-            <div className="flex-1 overflow-y-auto no-scrollbar pb-36 overscroll-y-contain">
-              {/* HERO BANNER WITH FLOATING TOP-LEFT BACK BUTTON & TOP-RIGHT BOOKMARK */}
-              <div className="relative h-[214px] w-full overflow-hidden bg-[#240850] shrink-0">
-                <ActivityCardBanner
-                  cardId={modalCard.id}
-                  bannerUrl={modalCard.bannerUrl}
-                  bannerPreset={modalCard.bannerPreset}
-                  bannerPositionY={modalCard.bannerPositionY}
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#140430] via-[#140430]/35 to-black/25" />
-
-                {/* Top Floating Bar: Only Back Button on Top-Left & Owner Edit Poster / Bookmark on Top-Right */}
-                <div className="absolute top-4 inset-x-4 z-20 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 text-[#141132] shrink-0">
                   <button
                     type="button"
-                    onClick={() => setIsActivityPageOpen(false)}
-                    aria-label="Kembali ke halaman sebelumnya"
-                    className="h-11 px-3.5 rounded-full bg-white/95 hover:bg-white text-[#141132] shadow-[0_8px_22px_rgba(14,3,38,0.35)] border border-purple-200/80 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shrink-0"
+                    onClick={() => {
+                      setActiveTab('activity');
+                      setActiveSidePage(null);
+                    }}
+                    aria-label="Open Saved Bookmarks"
+                    className={`relative p-1.5 rounded-xl hover:bg-white/50 active:scale-95 transition-all cursor-pointer ${
+                      activeTab === 'activity'
+                        ? 'bg-white/80 text-[#5B18E5] shadow-xs'
+                        : ''
+                    }`}
                   >
-                    <ArrowLeft className="w-5 h-5 stroke-[2.5] text-[#5B18E5]" />
-                    <span className="text-xs font-extrabold tracking-tight">
-                      Back
-                    </span>
-                  </button>
-
-                  <div className="flex items-center gap-2">
-                    {modalCard.isOwner && (
-                      <button
-                        type="button"
-                        onClick={() => openEditActivityBannerModal(modalCard.id)}
-                        aria-label="Tukar Gambar Poster Aktiviti"
-                        className="h-11 px-3.5 rounded-full bg-[#1A063E]/90 hover:bg-[#2B0B63] text-white border border-purple-300/60 shadow-[0_8px_22px_rgba(14,3,38,0.4)] flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
-                      >
-                        <Camera className="w-4 h-4 text-amber-300 stroke-[2.2]" />
-                        <span className="text-xs font-extrabold">
-                          Tukar Gambar
-                        </span>
-                      </button>
+                    <Bookmark
+                      className={`w-[19px] h-[19px] stroke-[2.1] ${
+                        activeTab === 'activity' ? 'fill-current' : ''
+                      }`}
+                    />
+                    {searchCategoryCounts.Saved > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-[#6315EA] text-white text-[9px] font-extrabold flex items-center justify-center tabular-nums shadow-xs">
+                        {searchCategoryCounts.Saved}
+                      </span>
                     )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveSidebarItem('Notifications');
+                      setActiveSidePage('notifications');
+                    }}
+                    aria-label="Notifications"
+                    className="relative p-1.5 rounded-xl hover:bg-white/50 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Bell className="w-[19.5px] h-[19.5px] stroke-[2.1]" />
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#FF3B30] border border-[#F5F1FF]" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSearchPageOpen(true)}
+                    aria-label="Open Full-Screen Search Page"
+                    className="p-1.5 rounded-xl hover:bg-white/50 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Search className="w-[19.5px] h-[19.5px] stroke-[2.1]" />
+                  </button>
+                </div>
+              </motion.header>
+            )}
+        </AnimatePresence>
 
+        {/* =========================================================
+            2. MAIN CONTENT AREA (Animated with Spring Physics via AnimatePresence)
+           ========================================================= */}
+        <AnimatePresence mode="wait" initial={false}>
+          {isActivityPageOpen && modalCard ? (
+            /* ---------------------------------------------------------
+               DEDICATED FULL-SCREEN ACTIVITY DETAIL PAGE
+               (CONTINUOUS EDITORIAL EVENT SHEET — NO ROUNDED SQUARE BOX STACK)
+               --------------------------------------------------------- */
+            <motion.div
+              key={`page-activity-detail-${modalCard.id}`}
+              initial={{opacity: 0, x: 42, scale: 0.985}}
+              animate={{opacity: 1, x: 0, scale: 1}}
+              exit={{opacity: 0, x: 32, scale: 0.985}}
+              transition={{type: 'spring', stiffness: 390, damping: 34}}
+              className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden bg-[#FAF9FF]"
+            >
+              {/* Scrollable Continuous Editorial Sheet */}
+              <div className="flex-1 overflow-y-auto no-scrollbar pb-28 overscroll-y-contain bg-[#FAF9FF]">
+                {/* IMMERSIVE TALL HERO HEADER */}
+                <div className="relative h-[252px] w-full overflow-hidden bg-[#18043C] shrink-0">
+                  <ActivityCardBanner
+                    cardId={modalCard.id}
+                    bannerUrl={modalCard.bannerUrl}
+                    bannerPreset={modalCard.bannerPreset}
+                    bannerPositionY={modalCard.bannerPositionY}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#0D0224] via-[#12042E]/45 to-black/25" />
+
+                  {/* Top Floating Glassmorphic Bar */}
+                  <div className="absolute top-4 inset-x-4 z-20 flex items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => toggleSaveProject(modalCard.id)}
-                      aria-label="Simpan aktiviti ini"
-                      className={`h-11 px-3.5 rounded-full shadow-[0_8px_22px_rgba(14,3,38,0.35)] border flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer ${
-                        isModalCardSaved
-                          ? 'bg-[#6215E5] border-purple-300 text-white'
-                          : 'bg-white/95 border-purple-200/80 text-[#141132]'
-                      }`}
+                      onClick={() => setIsActivityPageOpen(false)}
+                      aria-label="Kembali ke halaman sebelumnya"
+                      className="h-10 px-3.5 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md text-white border border-white/25 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer shrink-0"
                     >
-                      <Bookmark
-                        className={`w-4 h-4 stroke-[2.2] ${
-                          isModalCardSaved ? 'fill-current' : ''
-                        }`}
-                      />
-                      <span className="text-xs font-extrabold">
-                        {isModalCardSaved ? 'Saved' : 'Save'}
+                      <ArrowLeft className="w-4 h-4 stroke-[2.5] text-white" />
+                      <span className="text-xs font-extrabold tracking-tight">
+                        Kembali
                       </span>
+                    </button>
+
+                    <div className="flex items-center gap-1.5">
+                      {modalCard.canManage && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openEditProjectInfoModal(modalCard.id)
+                            }
+                            aria-label="Sunting Maklumat Aktiviti"
+                            className="h-10 px-3 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md text-white border border-white/25 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-amber-300 stroke-[2.2]" />
+                            <span className="text-[11px] font-extrabold">
+                              Sunting
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openEditActivityBannerModal(modalCard.id)
+                            }
+                            aria-label="Tukar Gambar Poster Aktiviti"
+                            className="h-10 px-3 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md text-white border border-white/25 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                          >
+                            <Camera className="w-3.5 h-3.5 text-amber-300 stroke-[2.2]" />
+                            <span className="text-[11px] font-extrabold">
+                              Poster
+                            </span>
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => toggleSaveProject(modalCard.id)}
+                        aria-label="Simpan aktiviti ini"
+                        className={`h-10 px-3.5 rounded-full backdrop-blur-md border flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer ${
+                          isModalCardSaved
+                            ? 'bg-[#6215E5] border-purple-300/80 text-white'
+                            : 'bg-black/45 hover:bg-black/65 border-white/25 text-white'
+                        }`}
+                      >
+                        <Bookmark
+                          className={`w-3.5 h-3.5 stroke-[2.2] ${
+                            isModalCardSaved ? 'fill-current' : ''
+                          }`}
+                        />
+                        <span className="text-[11px] font-extrabold">
+                          {isModalCardSaved ? 'Saved' : 'Save'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hero Bottom Editorial Title + Radial Match Gauge */}
+                  <div className="absolute bottom-9 inset-x-5 z-10 flex items-end justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10.5px] font-extrabold uppercase tracking-wider text-purple-200 mb-1.5">
+                        <span className="text-emerald-300">
+                          {modalCard.projectObj.status || 'OPEN'}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>{modalCard.facultyLabel1}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{modalCard.facultyLabel2}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-amber-300">+50 SDP</span>
+                      </div>
+                      <h1 className="text-[22px] sm:text-[24px] font-extrabold font-display text-white leading-[1.15] tracking-tight drop-shadow-md">
+                        {modalCard.title}
+                      </h1>
+                    </div>
+
+                    {/* Circular Precision Radial Match Indicator */}
+                    <div className="relative w-14 h-14 shrink-0 flex flex-col items-center justify-center rounded-full bg-black/45 backdrop-blur-md border border-white/25 shadow-lg">
+                      <svg
+                        className="w-14 h-14 -rotate-90 absolute inset-0"
+                        viewBox="0 0 56 56"
+                      >
+                        <circle
+                          cx="28"
+                          cy="28"
+                          r="23"
+                          fill="none"
+                          stroke="rgba(255,255,255,0.16)"
+                          strokeWidth="3.5"
+                        />
+                        <circle
+                          cx="28"
+                          cy="28"
+                          r="23"
+                          fill="none"
+                          stroke="#A78BFA"
+                          strokeWidth="3.5"
+                          strokeLinecap="round"
+                          strokeDasharray={`${2 * Math.PI * 23}`}
+                          strokeDashoffset={`${
+                            2 *
+                            Math.PI *
+                            23 *
+                            (1 - Math.min(100, modalMatchData.score) / 100)
+                          }`}
+                        />
+                      </svg>
+                      <span className="text-[13px] font-extrabold font-display text-white tabular-nums leading-none">
+                        {modalMatchData.score}%
+                      </span>
+                      <span className="text-[7.5px] font-extrabold uppercase tracking-widest text-purple-200 mt-0.5">
+                        Match
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CONTINUOUS CURVED EDITORIAL EVENT SHEET */}
+                <div className="relative z-10 -mt-6 rounded-t-[30px] bg-[#FAF9FF] text-[#14122E] pt-4 pb-8">
+                  {/* Segmented Editorial Sub-Navigation Strip (No Boxy Cards) */}
+                  <div className="px-5 border-b border-purple-100/90">
+                    <div className="flex items-center gap-5 overflow-x-auto no-scrollbar">
+                      {(
+                        [
+                          {id: 'semua', label: 'Semua Maklumat'},
+                          {id: 'butiran', label: 'Logistik & Galeri'},
+                          {id: 'padanan', label: 'Skor & Jadual'},
+                          {
+                            id: 'pasukan',
+                            label: `Pasukan (${
+                              projectMembers.filter(
+                                (m) =>
+                                  m.project_id === modalCard.id &&
+                                  m.membership_status === 'active'
+                              ).length
+                            }/${(modalCard.projectObj.slots_needed || 4) + 1})`,
+                          },
+                        ] as const
+                      ).map((tab) => {
+                        const isActive = activityDetailTab === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setActivityDetailTab(tab.id)}
+                            className={`relative pb-2.5 text-xs font-extrabold whitespace-nowrap transition-colors cursor-pointer ${
+                              isActive
+                                ? 'text-[#5B18E5]'
+                                : 'text-slate-400 hover:text-slate-700'
+                            }`}
+                          >
+                            {tab.label}
+                            {isActive && (
+                              <motion.div
+                                layoutId="activity-detail-editorial-underline"
+                                transition={{
+                                  type: 'spring',
+                                  stiffness: 500,
+                                  damping: 34,
+                                }}
+                                className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-[#5B18E5]"
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ORGANIZER BYLINE & INLINE AUTHOR TOOLBAR */}
+                  <div className="px-5 py-3.5 border-b border-purple-100/80 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#5B18E5] to-[#9333EA] text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-sm">
+                        {(modalCard.organizerName || 'U')
+                          .charAt(0)
+                          .toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-extrabold text-[#14122E] truncate">
+                            {modalCard.organizerName}
+                          </span>
+                          <span className="text-[10px] font-bold text-[#5B18E5]">
+                            · {modalCard.canManage ? 'Mod Pengurus' : 'Penganjur'}
+                          </span>
+                        </div>
+                        <div className="text-[10.5px] text-slate-500 truncate">
+                          {modalCard.projectObj.slots_needed || 4} kekosongan ahli ·{' '}
+                          {modalCard.projectObj.min_weekly_hours || 6} jam/minggu
+                        </div>
+                      </div>
+                    </div>
+
+                    {modalCard.canManage && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditProjectInfoModal(modalCard.id)}
+                          className="text-[11px] font-extrabold text-[#5B18E5] hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const ok = deleteOwnProject(modalCard.id);
+                            if (ok) {
+                              setIsActivityPageOpen(false);
+                              setCardIndex(0);
+                            }
+                          }}
+                          className="text-[11px] font-extrabold text-rose-600 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Padam</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SECTION 1: LEFT-RAIL VERTICAL TIMELINE LOGISTICS & EDITORIAL NARRATIVE */}
+                  {(activityDetailTab === 'semua' ||
+                    activityDetailTab === 'butiran') && (
+                    <div className="px-5 pt-5 pb-6 border-b border-purple-100/90 space-y-6">
+                      {/* Editorial Narrative */}
+                      <div className="pb-5 border-b border-purple-100/90 space-y-2">
+                        <div className="text-[10px] font-extrabold uppercase tracking-widest text-[#5B18E5]">
+                          Ringkasan &amp; Objektif Aktiviti
+                        </div>
+                        <p className="text-[13.5px] text-[#1E1B3A] leading-relaxed font-medium">
+                          {modalCard.description}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[11px] font-bold text-slate-500">
+                          <span className="text-[#4E14B8]">
+                            #{modalCard.projectObj.project_type}
+                          </span>
+                          {modalCard.tags.map((tag) => (
+                            <span key={tag} className="text-slate-500">
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Hairline Logistics Rows (Zero Rounded Boxes) */}
+                      <div>
+                        <div className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-2.5">
+                          Garis Masa &amp; Logistik Kampus
+                        </div>
+                        <div className="divide-y divide-purple-100/80 border-y border-purple-100/80">
+                          {/* Row 1: Tarikh */}
+                          <div className="py-3 flex items-start justify-between gap-4">
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 shrink-0">
+                              <Calendar className="w-3.5 h-3.5 text-[#5B18E5]" />
+                              <span>Tarikh &amp; Tempoh</span>
+                            </div>
+                            <div className="text-xs font-extrabold text-[#14122E] text-right">
+                              {modalCard.dateText}
+                            </div>
+                          </div>
+
+                          {/* Row 2: Lokasi */}
+                          <div className="py-3 flex items-start justify-between gap-4">
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 shrink-0">
+                              <MapPin className="w-3.5 h-3.5 text-[#5B18E5]" />
+                              <span>Lokasi Kampus</span>
+                            </div>
+                            <div className="text-xs font-extrabold text-[#14122E] text-right">
+                              {modalCard.locationText}
+                            </div>
+                          </div>
+
+                          {/* Row 3: Sasaran Penyertaan */}
+                          <div className="py-3 flex items-start justify-between gap-4">
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 shrink-0">
+                              <Users className="w-3.5 h-3.5 text-[#5B18E5]" />
+                              <span>Sasaran Pelajar</span>
+                            </div>
+                            <div className="text-xs font-extrabold text-[#14122E] text-right">
+                              {modalCard.audienceText}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* MAGAZINE FILMSTRIP & COLLAGE GALLERY */}
+                      <div className="pt-2 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                              Visual &amp; Lampiran
+                            </div>
+                            <h2 className="text-sm font-extrabold font-display text-[#14122E]">
+                              Katalog &amp; Poster Aktiviti (
+                              {modalGalleryImages.length})
+                            </h2>
+                          </div>
+
+                          {modalCard.canManage && (
+                            <div className="flex items-center gap-3">
+                              <label className="text-[11px] font-extrabold text-[#5B18E5] hover:underline flex items-center gap-1 shrink-0 cursor-pointer">
+                                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                <span>Muat Naik</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  multiple
+                                  className="hidden"
+                                  onChange={async (e) => {
+                                    const files = Array.from(
+                                      e.target.files || []
+                                    );
+                                    if (files.length === 0) return;
+                                    for (let i = 0; i < files.length; i++) {
+                                      try {
+                                        const dataUrl =
+                                          await compressImageFileToDataUrl(
+                                            files[i],
+                                            1000,
+                                            1000,
+                                            0.86
+                                          );
+                                        addProjectGalleryImage(modalCard.id, {
+                                          url: dataUrl,
+                                          caption: modalCard.title,
+                                        });
+                                      } catch {
+                                        notifyToast(
+                                          'Gagal Memuat Naik Gambar',
+                                          'Sila cuba fail gambar yang lain.',
+                                          'error'
+                                        );
+                                      }
+                                    }
+                                    e.target.value = '';
+                                  }}
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setIsAddingGalleryOnDetail((prev) => !prev)
+                                }
+                                className="text-[11px] font-extrabold text-slate-500 hover:text-slate-800 shrink-0 cursor-pointer"
+                              >
+                                {isAddingGalleryOnDetail
+                                  ? 'Tutup URL'
+                                  : '+ Pautan URL'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {modalCard.canManage && isAddingGalleryOnDetail && (
+                          <div className="flex items-center gap-2 pb-2 border-b border-purple-200">
+                            <input
+                              type="url"
+                              value={detailGalleryUrl}
+                              onChange={(e) =>
+                                setDetailGalleryUrl(e.target.value)
+                              }
+                              placeholder="Tampal URL gambar poster (https://...)"
+                              className="flex-1 bg-transparent py-1.5 font-semibold text-xs text-[#14122E] placeholder:text-slate-400 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!detailGalleryUrl.trim()) return;
+                                addProjectGalleryImage(modalCard.id, {
+                                  url: detailGalleryUrl.trim(),
+                                  caption: modalCard.title,
+                                });
+                                setDetailGalleryUrl('');
+                                setIsAddingGalleryOnDetail(false);
+                              }}
+                              className="px-3 py-1 rounded-full bg-[#5B18E5] text-white font-extrabold text-[11px] shrink-0 cursor-pointer"
+                            >
+                              Tambah
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Asymmetric Editorial Photo Strip */}
+                        <div className="grid grid-cols-2 gap-2">
+                          {modalGalleryImages.slice(0, 4).map((img, idx) => {
+                            const total = modalGalleryImages.length;
+                            const isFullWidthTop =
+                              total === 1 || (total === 3 && idx === 0);
+                            const extraCount =
+                              total > 4 && idx === 3 ? total - 4 : 0;
+
+                            return (
+                              <div
+                                key={img.id}
+                                onClick={() => {
+                                  setLightboxIndex(idx);
+                                  setLightboxZoom(1);
+                                }}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    setLightboxIndex(idx);
+                                    setLightboxZoom(1);
+                                  }
+                                }}
+                                className={`group relative overflow-hidden rounded-lg bg-[#12042E] cursor-pointer ${
+                                  isFullWidthTop
+                                    ? 'col-span-2 aspect-[16/9]'
+                                    : 'col-span-1 aspect-[4/3]'
+                                }`}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={img.url}
+                                  alt={`${modalCard.title} - Gambar ${idx + 1}`}
+                                  className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                />
+
+                                {(modalCard.isOwner || isAdmin) &&
+                                  modalGalleryImages.length > 1 &&
+                                  extraCount === 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeProjectGalleryImage(
+                                          modalCard.id,
+                                          img.id
+                                        );
+                                      }}
+                                      aria-label="Padam gambar"
+                                      className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-black/65 hover:bg-rose-600 text-white flex items-center justify-center shadow-sm cursor-pointer transition-colors"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+
+                                {extraCount > 0 && (
+                                  <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center">
+                                    <span className="text-white text-2xl font-extrabold font-display tracking-tight">
+                                      +{extraCount}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SECTION 2: INLINE TELEMETRY MATCH BREAKDOWN (40/25/20/15) & TIMELINE SCHEDULE */}
+                  {(activityDetailTab === 'semua' ||
+                    activityDetailTab === 'padanan') && (
+                    <div className="px-5 py-5 border-b border-purple-100/90 space-y-6">
+                      {/* Horizontal Telemetry Match Breakdown */}
+                      <div className="space-y-3.5">
+                        <div className="flex items-baseline justify-between">
+                          <div>
+                            <div className="text-[10px] font-extrabold uppercase tracking-widest text-[#5B18E5]">
+                              Telemetri Kesesuaian
+                            </div>
+                            <h2 className="text-sm font-extrabold font-display text-[#14122E]">
+                              Pecahan Skor Padanan (40/25/20/15)
+                            </h2>
+                          </div>
+                          <span className="text-lg font-extrabold font-display text-[#5B18E5] tabular-nums">
+                            {modalMatchData.score}
+                            <span className="text-xs text-slate-400 font-bold">
+                              /100
+                            </span>
+                          </span>
+                        </div>
+
+                        <div className="divide-y divide-purple-100/80 border-y border-purple-100/80">
+                          {[
+                            {
+                              label: 'Kemahiran (40%)',
+                              val: modalMatchData.skillScore,
+                              max: 40,
+                              barColor: 'bg-[#5B18E5]',
+                            },
+                            {
+                              label: 'Minat Bersama (25%)',
+                              val: modalMatchData.interestScore,
+                              max: 25,
+                              barColor: 'bg-[#7C3AED]',
+                            },
+                            {
+                              label: 'Jadual Masa (20%)',
+                              val: modalMatchData.scheduleScore,
+                              max: 20,
+                              barColor: 'bg-[#8B5CF6]',
+                            },
+                            {
+                              label: 'Matlamat & Tag (15%)',
+                              val: modalMatchData.goalScore,
+                              max: 15,
+                              barColor: 'bg-[#A855F7]',
+                            },
+                          ].map((metric) => {
+                            const pct = Math.min(
+                              100,
+                              Math.round((metric.val / metric.max) * 100)
+                            );
+                            return (
+                              <div
+                                key={metric.label}
+                                className="py-2.5 flex items-center gap-3 text-xs"
+                              >
+                                <span className="w-36 shrink-0 font-bold text-slate-600">
+                                  {metric.label}
+                                </span>
+                                <div className="flex-1 h-1.5 rounded-full bg-purple-100 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${metric.barColor} transition-all duration-500`}
+                                    style={{width: `${pct}%`}}
+                                  />
+                                </div>
+                                <span className="w-12 text-right font-extrabold text-[#14122E] tabular-nums shrink-0">
+                                  {metric.val}/{metric.max}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Hairline Schedule List (No Nested Boxes) */}
+                      <div className="space-y-2.5">
+                        <div>
+                          <div className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+                            Komitmen Mingguan
+                          </div>
+                          <h2 className="text-sm font-extrabold font-display text-[#14122E]">
+                            Jadual Perjumpaan &amp; Ketersediaan
+                          </h2>
+                        </div>
+
+                        {modalMeetingSlots.length === 0 ? (
+                          <p className="text-xs text-slate-500 italic py-1">
+                            Waktu fleksibel mengikut persetujuan ahli kumpulan
+                            dan penganjur.
+                          </p>
+                        ) : (
+                          <div className="divide-y divide-purple-100/80 border-y border-purple-100/80">
+                            {modalMeetingSlots.map((slot) => (
+                              <div
+                                key={slot.id}
+                                className="py-2.5 flex items-center justify-between text-xs"
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <span className="font-extrabold text-[#14122E]">
+                                    {slot.dayName}
+                                  </span>
+                                  <span className="text-slate-500 font-semibold tabular-nums">
+                                    {slot.start_time} – {slot.end_time}
+                                  </span>
+                                </div>
+                                <span
+                                  className={`text-[10.5px] font-extrabold ${
+                                    slot.hasOverlap
+                                      ? 'text-emerald-700'
+                                      : 'text-amber-700'
+                                  }`}
+                                >
+                                  {slot.hasOverlap
+                                    ? '✓ Masa Lapang Sepadan'
+                                    : 'Semak Jadual Kuliah'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SECTION 3: OPEN ROSTER DIRECTORY & SEAMLESS APPLICATION COMPOSER */}
+                  {(activityDetailTab === 'semua' ||
+                    activityDetailTab === 'pasukan') && (
+                    <div className="px-5 pt-5 pb-4 space-y-5">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <div>
+                          <div className="text-[10px] font-extrabold uppercase tracking-widest text-[#5B18E5]">
+                            Kolaborasi Kampus
+                          </div>
+                          <h2 className="text-sm font-extrabold font-display text-[#14122E]">
+                            Penyertaan Pasukan &amp; Permohonan
+                          </h2>
+                        </div>
+                        <span className="text-xs font-extrabold text-[#5B18E5] tabular-nums">
+                          {
+                            projectMembers.filter(
+                              (m) =>
+                                m.project_id === modalCard.id &&
+                                m.membership_status === 'active'
+                            ).length
+                          }{' '}
+                          / {(modalCard.projectObj.slots_needed || 4) + 1} Ahli
+                          Aktif
+                        </span>
+                      </div>
+
+                      {/* Open Directory List of Active Members */}
+                      <div className="divide-y divide-purple-100/80 border-y border-purple-100/80">
+                        {projectMembers
+                          .filter(
+                            (m) =>
+                              m.project_id === modalCard.id &&
+                              m.membership_status === 'active'
+                          )
+                          .map((member) => {
+                            const memberProfile = profiles.find(
+                              (p) => p.id === member.student_id
+                            );
+                            const initials = (
+                              memberProfile?.display_name || 'U'
+                            )
+                              .split(' ')
+                              .map((w) => w[0])
+                              .join('')
+                              .slice(0, 2)
+                              .toUpperCase();
+                            return (
+                              <div
+                                key={`${member.project_id}-${member.student_id}`}
+                                className="py-2.5 flex items-center justify-between gap-3 text-xs"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-7 h-7 rounded-full bg-purple-100 text-[#5B18E5] font-extrabold text-[10px] flex items-center justify-center shrink-0">
+                                    {initials}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-extrabold text-[#14122E] truncate">
+                                      {memberProfile?.display_name || 'Ahli UMS'}
+                                    </div>
+                                    <div className="text-[10.5px] text-slate-500 truncate">
+                                      {memberProfile?.faculty_short || 'UMS'} ·{' '}
+                                      {memberProfile?.matric_no || 'Pelajar'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span className="text-[10.5px] font-extrabold text-[#5B18E5] shrink-0">
+                                  {member.member_role === 'owner'
+                                    ? 'Ketua Projek'
+                                    : 'Ahli'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+
+                      {/* Student Application or Organizer Approval Flow */}
+                      {(() => {
+                        const myApp = currentUser
+                          ? applications.find(
+                              (a) =>
+                                a.project_id === modalCard.id &&
+                                a.applicant_id === currentUser.id
+                            )
+                          : undefined;
+                        const projectApps = applications.filter(
+                          (a) => a.project_id === modalCard.id
+                        );
+
+                        return (
+                          <div className="space-y-4">
+                            {!modalCard.isOwner && (
+                              <div>
+                                {myApp && myApp.status !== 'withdrawn' ? (
+                                  <div className="border-y border-purple-200/80 py-3 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs font-extrabold text-[#14122E]">
+                                        Status Permohonan Anda
+                                      </span>
+                                      <span
+                                        className={`text-[10.5px] font-extrabold uppercase ${
+                                          myApp.status === 'accepted'
+                                            ? 'text-emerald-700'
+                                            : myApp.status === 'declined'
+                                            ? 'text-rose-600'
+                                            : 'text-amber-700'
+                                        }`}
+                                      >
+                                        ● {myApp.status}
+                                      </span>
+                                    </div>
+                                    {myApp.note && (
+                                      <p className="text-[11.5px] text-slate-600 italic">
+                                        &ldquo;{myApp.note}&rdquo;
+                                      </p>
+                                    )}
+                                    {myApp.status === 'pending' && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          withdrawApplication(myApp.id)
+                                        }
+                                        className="text-[11px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+                                      >
+                                        Tarik Balik Permohonan
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                                      Nota Ringkas Permohonan Anda
+                                    </label>
+                                    <textarea
+                                      rows={2}
+                                      value={applyNote}
+                                      onChange={(e) =>
+                                        setApplyNote(e.target.value)
+                                      }
+                                      placeholder="Tulis mesej ringkas & kemahiran anda untuk menyertai aktiviti ini..."
+                                      className="w-full border-b-2 border-purple-200 focus:border-[#5B18E5] bg-transparent py-1.5 text-xs text-[#14122E] placeholder:text-slate-400 focus:outline-none transition-colors"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        applyToProject(
+                                          modalCard.id,
+                                          applyNote.trim() ||
+                                            `Saya berminat menyertai ${modalCard.title} dan sedia menyumbang kemahiran saya.`
+                                        );
+                                        setApplyNote('');
+                                      }}
+                                      className="w-full h-11 rounded-full bg-[#5B18E5] hover:bg-[#4B12C2] text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-sm cursor-pointer transition-all"
+                                    >
+                                      <Send className="w-3.5 h-3.5" />
+                                      <span>Hantar Permohonan Penyertaan</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {(modalCard.isOwner || isAdmin) && (
+                              <div className="space-y-2.5">
+                                <div className="text-[10.5px] font-extrabold uppercase tracking-wider text-[#5B18E5]">
+                                  Senarai Pemohon ({projectApps.length})
+                                </div>
+                                {projectApps.length === 0 ? (
+                                  <p className="text-[11.5px] text-slate-500 italic">
+                                    Belum ada permohonan diterima untuk aktiviti
+                                    ini.
+                                  </p>
+                                ) : (
+                                  <div className="divide-y divide-purple-100/80 border-y border-purple-100/80">
+                                    {projectApps.map((app) => {
+                                      const applicant = profiles.find(
+                                        (p) => p.id === app.applicant_id
+                                      );
+                                      return (
+                                        <div
+                                          key={app.id}
+                                          className="py-3 space-y-1.5 text-xs"
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="font-extrabold text-[#14122E] truncate">
+                                              {applicant?.display_name ||
+                                                'Pelajar UMS'}
+                                            </span>
+                                            <span className="text-[10px] font-extrabold uppercase text-[#5B18E5]">
+                                              {app.status}
+                                            </span>
+                                          </div>
+                                          {app.note && (
+                                            <p className="text-[11px] text-slate-600">
+                                              {app.note}
+                                            </p>
+                                          )}
+                                          {app.status === 'pending' && (
+                                            <div className="flex items-center gap-3 pt-1">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  decideApplication(
+                                                    app.id,
+                                                    'accepted'
+                                                  )
+                                                }
+                                                className="px-3.5 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] cursor-pointer"
+                                              >
+                                                Terima
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  decideApplication(
+                                                    app.id,
+                                                    'declined'
+                                                  )
+                                                }
+                                                className="px-3.5 py-1 rounded-full bg-rose-100 hover:bg-rose-200 text-rose-700 font-extrabold text-[11px] cursor-pointer"
+                                              >
+                                                Tolak
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* FLUSH BOTTOM STICKY ACTION DOCK (REPLACES FLOATING ROUNDED BOX) */}
+              <div className="relative z-30 shrink-0 border-t border-purple-200/80 bg-white/95 backdrop-blur-xl px-5 py-3 flex items-center justify-between gap-3 shadow-[0_-8px_24px_rgba(20,10,50,0.06)]">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 truncate">
+                    Hubungi Penganjur · {modalCard.organizerName}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs font-extrabold text-[#14122E] flex items-center gap-1 tabular-nums">
+                      <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
+                      <span>{modalCard.organizerPhone}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (navigator.clipboard) {
+                          navigator.clipboard
+                            .writeText(modalCard.organizerPhone)
+                            .catch(() => {});
+                        }
+                        notifyToast(
+                          'No. WhatsApp Disalin',
+                          modalCard.organizerPhone,
+                          'success'
+                        );
+                      }}
+                      className="text-[10.5px] font-extrabold text-[#5B18E5] hover:underline cursor-pointer"
+                    >
+                      Salin
                     </button>
                   </div>
                 </div>
 
-                {/* Bottom Overlay Metadata on Hero Banner */}
-                <div className="absolute bottom-3.5 inset-x-4 z-10 flex items-end justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[11px] font-bold text-purple-200 mb-1">
-                      <span>{modalCard.facultyLabel1}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{modalCard.facultyLabel2}</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-amber-300">+50 SDP</span>
-                    </div>
-                    <h1 className="text-[22px] font-extrabold font-display text-white leading-tight drop-shadow-md">
-                      {modalCard.title}
-                    </h1>
-                  </div>
-                </div>
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() =>
+                    notifyToast(
+                      'Membuka WhatsApp Direct',
+                      `Menghubungi ${modalCard.organizerName} (${modalCard.organizerPhone})...`,
+                      'success'
+                    )
+                  }
+                  className="h-11 px-5 rounded-full bg-[#16A34A] hover:bg-[#15803D] active:scale-95 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 shrink-0 transition-all cursor-pointer"
+                >
+                  <MessageCircle className="w-4 h-4 fill-current shrink-0" />
+                  <span>WhatsApp Direct</span>
+                </a>
               </div>
-
-              {/* MAIN DEEP INFO CARDS CONTAINER */}
-              <div className="px-4 pt-3.5 space-y-3.5">
-                {/* CARD 1: FULL ACTIVITY INFO, LOGISTICS & DESCRIPTION */}
-                <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.22)] space-y-3 text-[#14122E]">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                    <div>
-                      <div className="text-[10.5px] font-bold uppercase tracking-wider text-[#5B18E5]">
-                        Maklumat Penuh Aktiviti UMS
-                      </div>
-                      <div className="text-xs font-semibold text-slate-500 mt-0.5">
-                        Status: Terbuka · {modalCard.projectObj.slots_needed || 4}{' '}
-                        Kekosongan Ahli ({modalCard.projectObj.min_weekly_hours || 6}{' '}
-                        jam/minggu)
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-lg font-extrabold font-display text-[#5B18E5] tabular-nums">
-                        {modalMatchData.score}%
-                      </span>
-                      <div className="text-[9.5px] font-bold text-slate-500">
-                        Skor Padanan
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Owner-Only Poster Control Row inside Card 1 */}
-                  <div className="p-2.5 rounded-2xl bg-[#F5F0FF] border border-purple-200/80 flex items-center justify-between gap-2 text-xs">
-                    {modalCard.isOwner ? (
-                      <>
-                        <div className="min-w-0">
-                          <div className="font-extrabold text-[#4E14B8]">
-                            Anda ialah Pemilik Aktiviti Ini
-                          </div>
-                          <div className="text-[10.5px] text-slate-600">
-                            Anda boleh muat naik poster baharu, guna URL, atau tukar preset UMS.
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => openEditActivityBannerModal(modalCard.id)}
-                          className="px-3 py-2 rounded-xl bg-[#5B18E5] hover:bg-[#4C11C4] text-white text-[11px] font-extrabold shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Camera className="w-3.5 h-3.5" />
-                          <span>Tukar Gambar</span>
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="min-w-0">
-                          <div className="font-extrabold text-slate-700">
-                            Poster Dikawal oleh Pemilik Aktiviti
-                          </div>
-                          <div className="text-[10.5px] text-slate-500 truncate">
-                            Pemilik: {modalCard.organizerName}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            switchPersona(modalCard.ownerId);
-                            notifyToast(
-                              'Akaun Ditukar kepada Pemilik',
-                              `Anda kini log masuk sebagai pemilik aktiviti ini dan boleh menukar gambar poster.`,
-                              'default'
-                            );
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-white border border-purple-200 text-[#5B18E5] text-[10.5px] font-extrabold shrink-0 cursor-pointer hover:bg-purple-50"
-                        >
-                          Uji Sebagai Pemilik
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Key Logistics Rows */}
-                  <div className="grid grid-cols-1 gap-2 text-xs">
-                    <div className="flex items-start gap-2.5 p-2.5 rounded-2xl bg-[#F7F4FF]">
-                      <Calendar className="w-4 h-4 text-[#5B18E5] shrink-0 mt-0.5 stroke-[2.2]" />
-                      <div>
-                        <div className="text-[10px] font-bold text-slate-500">
-                          Tarikh &amp; Tempoh Program
-                        </div>
-                        <div className="font-extrabold text-[#14122E]">
-                          {modalCard.dateText}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2.5 p-2.5 rounded-2xl bg-[#F7F4FF]">
-                      <MapPin className="w-4 h-4 text-[#5B18E5] shrink-0 mt-0.5 stroke-[2.2]" />
-                      <div>
-                        <div className="text-[10px] font-bold text-slate-500">
-                          Lokasi Kampus UMS
-                        </div>
-                        <div className="font-extrabold text-[#14122E]">
-                          {modalCard.locationText}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2.5 p-2.5 rounded-2xl bg-[#F7F4FF]">
-                      <Users className="w-4 h-4 text-[#5B18E5] shrink-0 mt-0.5 stroke-[2.2]" />
-                      <div>
-                        <div className="text-[10px] font-bold text-slate-500">
-                          Sasaran Penyertaan Pelajar
-                        </div>
-                        <div className="font-extrabold text-[#14122E]">
-                          {modalCard.audienceText}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Detailed Description */}
-                  <div className="pt-1">
-                    <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-1">
-                      Penerangan Terperinci &amp; Objektif
-                    </h2>
-                    <p className="text-[12.5px] text-slate-700 leading-relaxed font-medium">
-                      {modalCard.description}
-                    </p>
-                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-500 font-semibold">
-                      <span>Kategori: {modalCard.projectObj.project_type}</span>
-                      <span aria-hidden="true">·</span>
-                      <span> Tag: {modalCard.tags.join(' / ')}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* CARD 2: 40/25/20/15 MATCH SCORE BREAKDOWN (PECAHAN SKOR PADANAN) */}
-                <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.22)] space-y-3 text-[#14122E]">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                        Pecahan Skor Padanan (40/25/20/15)
-                      </h2>
-                      <p className="text-[11px] text-slate-500 font-medium">
-                         Analisis kesesuaian profil pelajar anda ({currentUser?.display_name || 'Fahrin'}) dengan aktiviti ini
-                      </p>
-                    </div>
-                    <span className="text-base font-extrabold text-[#5B18E5] tabular-nums">
-                      {modalMatchData.score}/100
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5 text-xs">
-                    <div className="p-3 rounded-2xl bg-[#F4EFFF] space-y-1">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-                        <span>Kemahiran (40%)</span>
-                        <span className="font-extrabold text-[#4E14B8] tabular-nums">
-                          {modalMatchData.skillScore} / 40
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-purple-200 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-[#5B18E5]"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.round((modalMatchData.skillScore / 40) * 100)
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-2xl bg-[#F4EFFF] space-y-1">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-                        <span>Minat Bersama (25%)</span>
-                        <span className="font-extrabold text-[#4E14B8] tabular-nums">
-                          {modalMatchData.interestScore} / 25
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-purple-200 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-[#7C3AED]"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.round(
-                                (modalMatchData.interestScore / 25) * 100
-                              )
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-2xl bg-[#F4EFFF] space-y-1">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-                        <span>Jadual Masa (20%)</span>
-                        <span className="font-extrabold text-[#4E14B8] tabular-nums">
-                          {modalMatchData.scheduleScore} / 20
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-purple-200 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-[#8B5CF6]"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.round(
-                                (modalMatchData.scheduleScore / 20) * 100
-                              )
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-2xl bg-[#F4EFFF] space-y-1">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-                        <span>Matlamat &amp; Tag (15%)</span>
-                        <span className="font-extrabold text-[#4E14B8] tabular-nums">
-                          {modalMatchData.goalScore} / 15
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-purple-200 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-[#A855F7]"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.round((modalMatchData.goalScore / 15) * 100)
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* CARD 3: REQUIRED SKILLS & SHARED INTERESTS (SYARAT KEMAHIRAN & MINAT) */}
-                <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.22)] space-y-3 text-[#14122E]">
-                  <div>
-                    <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                      Syarat Kemahiran &amp; Minat Projek
-                    </h2>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      Kemahiran yang diperlukan oleh penganjur dan padanan dengan profil anda
-                    </p>
-                  </div>
-
-                  {modalRequiredSkills.length === 0 ? (
-                    <p className="text-xs text-slate-500">
-                      Tiada syarat kemahiran khusus ditetapkan — terbuka kepada semua pelajar.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {modalRequiredSkills.map((req) => (
-                        <div
-                          key={req.skill_id}
-                          className={`p-2.5 rounded-2xl border flex items-center justify-between gap-2 text-xs ${
-                            req.studentHasSkill
-                              ? 'bg-emerald-50/70 border-emerald-200'
-                              : 'bg-[#F8F6FF] border-purple-100'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="font-extrabold text-[#14122E] flex items-center gap-1.5">
-                              <span>{req.name}</span>
-                              <span className="text-[10px] font-semibold text-slate-500">
-                                · {req.mandatory ? 'Wajib' : 'Pilihan'} (Kepentingan{' '}
-                                {req.importance}/5)
-                              </span>
-                            </div>
-                            <div className="text-[10.5px] text-slate-500 mt-0.5">
-                              Kategori: {req.category}
-                            </div>
-                          </div>
-
-                          <span
-                            className={`text-[10.5px] font-extrabold shrink-0 ${
-                              req.studentHasSkill
-                                ? 'text-emerald-700'
-                                : 'text-slate-400'
-                            }`}
-                          >
-                            {req.studentHasSkill ? '✓ Ada di Profil' : 'Belum ditambah'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {modalProjectInterests.length > 0 && (
-                    <div className="pt-2 border-t border-slate-100">
-                      <div className="text-[11px] font-bold text-slate-500 mb-1">
-                        Bidang Minat Aktiviti:
-                      </div>
-                      <div className="text-xs font-semibold text-[#4E14B8]">
-                        {modalProjectInterests
-                          .map((intr) =>
-                            intr.isShared ? `✓ ${intr.name} (Sepadan)` : intr.name
-                          )
-                          .join(' · ')}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* CARD 4: WEEKLY SCHEDULE & MEETING SLOTS (JADUAL PERJUMPAAN) */}
-                <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.22)] space-y-2.5 text-[#14122E]">
-                  <div>
-                    <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                      Jadual Perjumpaan &amp; Komitmen Masa
-                    </h2>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      Slot mingguan projek berbanding waktu lapang anda di UMS
-                    </p>
-                  </div>
-
-                  {modalMeetingSlots.length === 0 ? (
-                    <p className="text-xs text-slate-500">
-                      Waktu fleksibel mengikut persetujuan ahli kumpulan dan penganjur.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {modalMeetingSlots.map((slot) => (
-                        <div
-                          key={slot.id}
-                          className="p-2.5 rounded-2xl bg-[#F7F4FF] flex items-center justify-between text-xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Calendar className="w-4 h-4 text-[#5B18E5] shrink-0" />
-                            <div>
-                              <span className="font-extrabold text-[#14122E]">
-                                {slot.dayName}
-                              </span>
-                              <span className="text-slate-600 font-semibold ml-1.5 tabular-nums">
-                                {slot.start_time} – {slot.end_time}
-                              </span>
-                            </div>
-                          </div>
-                          <span
-                            className={`text-[10.5px] font-extrabold ${
-                              slot.hasOverlap
-                                ? 'text-emerald-700'
-                                : 'text-amber-700'
-                            }`}
-                          >
-                            {slot.hasOverlap
-                              ? '✓ Masa Lapang Sepadan'
-                              : 'Semak Jadual Kuliah'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* CARD 5: EXPLORE OTHER UMS ACTIVITIES QUICK SWITCHER */}
-                <div className="rounded-[24px] bg-white/92 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.2)] space-y-2 text-[#14122E]">
-                  <div className="text-xs font-extrabold text-slate-800">
-                    Aktiviti UMS Lain Mengikut Skor Padanan:
-                  </div>
-                  <div className="space-y-1.5">
-                    {rankedProjectsList.map(({project, evalResult}) => (
-                      <button
-                        key={project.id}
-                        type="button"
-                        onClick={() => setInspectedCardId(project.id)}
-                        className={`w-full text-left p-2.5 rounded-xl border flex items-center justify-between text-xs transition-colors cursor-pointer ${
-                          project.id === modalCard.id
-                            ? 'bg-[#F4EFFF] border-[#6215E5]'
-                            : 'bg-white border-slate-200 hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-bold text-[#14122E] truncate">
-                            {project.title}
-                          </div>
-                          <div className="text-[10.5px] text-slate-500 truncate">
-                            {project.location || 'Kampus UMS'} · WA:{' '}
-                            {project.organizer_phone || '+6012-883 4910'}
-                          </div>
-                        </div>
-                        <span className="font-extrabold text-[#5B18E5] tabular-nums shrink-0">
-                          {evalResult.totalScore}%
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* FLOATING BOTTOM-RIGHT ORGANIZER & WHATSAPP DIRECT CARD */}
-            <div className="absolute bottom-3.5 right-3.5 left-10 z-30 rounded-[24px] bg-gradient-to-br from-[#ECFDF5] via-white to-[#D1FAE5] border-2 border-emerald-400 p-3 shadow-[0_16px_40px_rgba(6,44,30,0.45)] flex items-center justify-between gap-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="text-[9.5px] font-extrabold uppercase tracking-wider text-emerald-800 truncate">
-                  Penganjur Aktiviti (WhatsApp)
-                </div>
-                <div className="text-xs font-extrabold text-slate-900 truncate">
-                  {modalCard.organizerName}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 tabular-nums">
-                    <Phone className="w-3 h-3 shrink-0" />
-                    <span>{modalCard.organizerPhone}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (navigator.clipboard) {
-                        navigator.clipboard
-                          .writeText(modalCard.organizerPhone)
-                          .catch(() => {});
-                      }
-                      notifyToast(
-                        'No. WhatsApp Disalin',
-                        modalCard.organizerPhone,
-                        'success'
-                      );
-                    }}
-                    className="text-[10px] font-extrabold text-emerald-900 underline cursor-pointer"
-                  >
-                    Salin
-                  </button>
-                </div>
-              </div>
-
-              <a
-                href={whatsappUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() =>
-                  notifyToast(
-                    'Membuka WhatsApp Direct',
-                    `Menghubungi ${modalCard.organizerName} (${modalCard.organizerPhone})...`,
-                    'success'
-                  )
-                }
-                className="h-11 px-4 rounded-2xl bg-[#25D366] hover:bg-[#1EBE5D] active:scale-95 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 shrink-0 transition-all cursor-pointer"
-              >
-                <MessageCircle className="w-4 h-4 fill-current shrink-0" />
-                <span>WhatsApp</span>
-              </a>
-            </div>
-          </div>
-        ) : isPostActivityPageOpen ? (
+            </motion.div>
+          ) : isPostActivityPageOpen ? (
           /* ---------------------------------------------------------
              DEDICATED FULL-SCREEN POST ACTIVITY PAGE
-             (No Main Header & No Bottom Navigation — Top-left Back button only,
-              Live Activity Card Preview, and all 5 deep sections matching Activity Detail Page)
+             (EDGE-TO-EDGE COMPACT EDITORIAL STUDIO — NO ROUNDED-SQUARE BOXES)
              --------------------------------------------------------- */
-          <div className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden">
-            {/* Top Bar: Only Top-Left Back Button + Title + Reset Draft */}
-            <div className="px-4 pt-4 pb-2.5 flex items-center justify-between gap-2.5 shrink-0">
+          <motion.div
+            key="page-post-activity"
+            initial={{opacity: 0, y: 48, scale: 0.985}}
+            animate={{opacity: 1, y: 0, scale: 1}}
+            exit={{opacity: 0, y: 36, scale: 0.985}}
+            transition={{type: 'spring', stiffness: 380, damping: 34}}
+            className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden bg-[#FAF9FF] text-[#14122E]"
+          >
+            {/* Compact Flush Top Bar */}
+            <div className="h-12 px-3.5 bg-white/95 backdrop-blur-md border-b border-purple-200/80 flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
                 <button
                   type="button"
                   onClick={() => setIsPostActivityPageOpen(false)}
                   aria-label="Kembali ke halaman sebelumnya"
-                  className="h-10 px-3.5 rounded-full bg-white shadow-[0_6px_18px_rgba(32,12,82,0.14)] border border-purple-200/80 flex items-center gap-1.5 text-[#141132] hover:bg-[#F3EEFF] active:scale-95 transition-all cursor-pointer shrink-0"
+                  className="group h-8 pl-1.5 pr-3 rounded-full bg-white hover:bg-[#F5F0FF] border border-purple-200/95 shadow-[0_2px_8px_rgba(91,24,229,0.1)] flex items-center gap-1.5 text-[#14122E] active:scale-95 transition-all cursor-pointer shrink-0"
                 >
-                  <ArrowLeft className="w-4 h-4 stroke-[2.5] text-[#5B18E5]" />
-                  <span className="text-xs font-extrabold">Back</span>
+                  <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#6B2CF5] to-[#4A11C4] text-white flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                    <ArrowLeft className="w-3 h-3 stroke-[2.6]" />
+                  </span>
+                  <span className="text-[11px] font-extrabold tracking-tight text-[#250E5E]">
+                    Kembali
+                  </span>
                 </button>
                 <div className="min-w-0">
-                  <h1 className="text-[17px] font-extrabold font-display text-[#141132] tracking-tight truncate">
-                    Post New UMS Activity
+                  <h1 className="text-[12.5px] font-extrabold font-display text-[#141132] tracking-tight truncate leading-tight">
+                    Siarkan Aktiviti UMS
                   </h1>
-                  <p className="text-[10px] font-semibold text-[#5B18E5] truncate">
-                    Lengkapkan semua maklumat halaman info aktiviti UMS
+                  <p className="text-[9.5px] font-semibold text-slate-400 truncate leading-tight">
+                    Kongsi program kelab, pensyarah atau fakulti
                   </p>
                 </div>
               </div>
@@ -3059,19 +4465,21 @@ export function MainMobileAppInterface() {
                   setNewAudience('Terbuka kepada semua pelajar FKI & UMS');
                   setNewSlotsNeeded(4);
                   setNewMinWeeklyHours(6);
-                  setNewBannerMode('preset');
+                  setNewBannerMode('upload');
                   setNewBannerUrl('');
                   setNewBannerPreset('prj-techfest');
                   setNewBannerPosY(50);
+                  setNewRequiredSkills([]);
                   notifyToast('Borang Dikosongkan', undefined, 'default');
                 }}
-                className="h-9 px-3 rounded-full bg-white/85 border border-purple-200 text-[#4E14B8] text-[10.5px] font-extrabold shrink-0 cursor-pointer"
+                className="h-7 px-2.5 rounded-full bg-rose-50 hover:bg-rose-100 border border-rose-200/80 text-rose-600 text-[10px] font-extrabold flex items-center gap-1 active:scale-95 transition-all cursor-pointer shrink-0"
               >
-                Reset
+                <RotateCcw className="w-2.5 h-2.5 stroke-[2.5]" />
+                <span>Reset</span>
               </button>
             </div>
 
-            {/* Scrollable Full-Screen Form with Live Preview & 5 Complete Sections */}
+            {/* Edge-to-Edge Scrollable Form */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -3101,14 +4509,14 @@ export function MainMobileAppInterface() {
                   p_badge_line_1: newBadgeLine1.trim() || 'Program',
                   p_badge_line_2: newBadgeLine2.trim() || newType,
                   p_tags: [
-                    newTag1.trim() || 'Tech',
+                    newTag1.trim() || 'AI & Tech',
                     newTag2.trim() || 'Networking',
                     newTag3.trim() || newType,
                   ],
                   p_attribute_tags:
                     newAttributeTags.length > 0
                       ? newAttributeTags
-                      : ['Programming', 'Planning'],
+                      : ['Rentas Fakulti', 'Beginner Friendly'],
                   p_organizer_phone: newOrganizerPhone.trim(),
                   p_organizer_name:
                     newOrganizerName.trim() ||
@@ -3121,6 +4529,10 @@ export function MainMobileAppInterface() {
                       : null,
                   p_banner_preset: newBannerPreset,
                   p_banner_position_y: newBannerPosY,
+                  p_gallery_images:
+                    newDraftGalleryImages.length > 0
+                      ? newDraftGalleryImages
+                      : undefined,
                   p_required_skills: newRequiredSkills,
                   p_interests: newProjectInterests,
                   p_meeting_slots: newMeetingSlots,
@@ -3129,885 +4541,1155 @@ export function MainMobileAppInterface() {
                   setNewTitle('');
                   setNewDesc('');
                   setNewBannerUrl('');
+                  setNewDraftGalleryImages([]);
                   setCardIndex(0);
                   setIsPostActivityPageOpen(false);
                   openCardInfoModal(createdId);
                 }
               }}
-              className="flex-1 overflow-y-auto no-scrollbar px-4 pb-8 space-y-3.5 overscroll-y-contain"
+              className="flex-1 flex flex-col min-h-0"
             >
-              {/* LIVE PREVIEW CARD (Shows exactly how the activity card, poster banner & 40/25/20/15 score look) */}
-              <div className="rounded-[24px] bg-white/95 border-2 border-purple-300/90 p-3.5 shadow-[0_12px_28px_rgba(18,4,48,0.25)] space-y-2.5 text-[#14122E]">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#5B18E5]">
-                    Pralihat Langsung Kad &amp; Poster Aktiviti
+              <div className="flex-1 overflow-y-auto no-scrollbar divide-y divide-purple-200/75 overscroll-y-contain">
+                {/* SLIM 1-CLICK TEMPLATE STRIP */}
+                <div className="px-3.5 py-2 bg-[#F4F0FF] flex items-center justify-between gap-2 text-[10px]">
+                  <span className="font-extrabold uppercase tracking-wider text-[#5B18E5] flex items-center gap-1 shrink-0">
+                    <Sparkles className="w-3 h-3" />
+                    <span>Isi Pantas:</span>
                   </span>
-                  <span className="text-xs font-extrabold text-[#5B18E5] tabular-nums">
-                    Skor Semasa: {liveDraftMatchEval.totalScore}%
-                  </span>
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                    {[
+                      {id: 'techfest', label: 'Hackathon AI'},
+                      {id: 'shuttle', label: 'Smart Shuttle'},
+                      {id: 'reef', label: 'Marine Reef'},
+                    ].map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() =>
+                          applyPostActivityTemplate(
+                            tpl.id as 'techfest' | 'shuttle' | 'reef'
+                          )
+                        }
+                        className="px-2 py-0.5 rounded-md bg-white border border-purple-200/90 font-extrabold text-[#4C14B8] hover:bg-[#5B18E5] hover:text-white whitespace-nowrap transition-colors cursor-pointer"
+                      >
+                        {tpl.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="rounded-[18px] bg-[#F6F2FF] border border-purple-200/80 overflow-hidden">
-                  {/* Live Poster Banner Preview */}
-                  <div className="relative h-[112px] w-full overflow-hidden bg-[#240850]">
-                    <ActivityCardBanner
-                      cardId={newBannerPreset}
-                      bannerUrl={
-                        newBannerMode !== 'preset' && newBannerUrl.trim()
-                          ? newBannerUrl.trim()
-                          : null
-                      }
-                      bannerPreset={newBannerPreset}
-                      bannerPositionY={newBannerPosY}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent" />
-                    <div className="absolute top-2.5 left-2.5 px-2.5 py-0.5 rounded-full bg-white/95 text-[#141132] text-[9.5px] font-extrabold inline-flex items-center gap-1 shadow-xs">
-                      <Flame className="w-3 h-3 text-[#6215E5] fill-[#6215E5]" />
-                      <span>Trending</span>
-                    </div>
-                    <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px] font-bold text-white drop-shadow">
-                      <span>
-                        {newBannerMode !== 'preset' && newBannerUrl.trim()
-                          ? 'Poster Suai Aktif'
-                          : `Preset: ${
-                              UMS_BANNER_PRESETS.find(
-                                (p) => p.id === newBannerPreset
-                              )?.label || 'TechFest UMS'
-                            }`}
-                      </span>
-                      <span>+50 SDP</span>
-                    </div>
+                {/* COMPACT HORIZONTAL LIVE PREVIEW STRIP */}
+                <div className="px-3.5 py-2.5 bg-white/80 space-y-1.5">
+                  <div className="flex items-center justify-between text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                    <span>Pralihat Kad Aktiviti</span>
+                    <span className="text-[#5B18E5] font-bold normal-case">
+                      Terbuka untuk semua bidang &amp; fakulti
+                    </span>
                   </div>
 
-                  <div className="p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-extrabold font-display text-[#14122E] truncate">
+                  <div className="flex items-start gap-2.5">
+                    <div className="relative w-20 h-16 rounded overflow-hidden bg-[#240850] shrink-0">
+                      <ActivityCardBanner
+                        cardId={newBannerPreset}
+                        bannerUrl={
+                          newBannerMode !== 'preset' && newBannerUrl.trim()
+                            ? newBannerUrl.trim()
+                            : null
+                        }
+                        bannerPreset={newBannerPreset}
+                        bannerPositionY={newBannerPosY}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                      <span className="absolute bottom-1 left-1 text-[8px] font-extrabold text-amber-300">
+                        +50 SDP
+                      </span>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-1.5">
+                        <div className="text-[12px] font-extrabold font-display text-[#14122E] truncate">
                           {newTitle.trim() || 'Tajuk Aktiviti Anda...'}
                         </div>
-                        <div className="mt-1 space-y-0.5 text-[10.5px] font-semibold text-slate-600">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <Calendar className="w-3 h-3 text-[#5B18E5] shrink-0" />
-                            <span>{newDateText || 'Tarikh program'}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 truncate">
-                            <MapPin className="w-3 h-3 text-[#5B18E5] shrink-0" />
-                            <span>{newLocationText || 'Lokasi kampus UMS'}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 truncate">
-                            <Users className="w-3 h-3 text-[#5B18E5] shrink-0" />
-                            <span>{newAudience || 'Sasaran pelajar'}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="shrink-0 px-2.5 py-1.5 rounded-2xl bg-[#EAE2FF] border border-[#D8C7FF] text-center text-[#5A17E0]">
-                        <div className="text-[9.5px] font-extrabold leading-tight">
-                          {newBadgeLine1 || 'Program'}
-                        </div>
-                        <div className="text-[10px] font-extrabold leading-tight">
+                        <span className="text-[9px] font-extrabold text-[#5B18E5] shrink-0">
+                          {newBadgeLine1 || 'Program'} ·{' '}
                           {newBadgeLine2 || newType}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                        {newDateText || 'Tarikh'} ·{' '}
+                        {newLocationText || 'Lokasi UMS'}
+                      </div>
+                      <p className="text-[10px] text-slate-600 line-clamp-1 mt-0.5">
+                        {newDesc.trim() ||
+                          'Penerangan ringkas objektif aktiviti...'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 01: MAKLUMAT ASAS, POSTER & KATALOG GAMBAR */}
+                <div className="px-3.5 py-2.5 space-y-2.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => togglePostSection('s1')}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#F3EEFF] via-[#F7F4FF] to-white border border-purple-200/90 shadow-[0_1px_3px_rgba(91,24,229,0.06)] flex items-center justify-between gap-2 hover:border-[#5B18E5]/50 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex items-center justify-center min-w-[26px] h-5 px-1.5 rounded-md bg-gradient-to-br from-[#5B18E5] to-[#4310B8] text-white text-[10px] font-extrabold tracking-wider shadow-[0_2px_6px_rgba(91,24,229,0.25)] shrink-0">
+                        01
+                      </span>
+                      <span className="text-[11px] font-extrabold font-display uppercase tracking-wide text-[#14122E] truncate">
+                        Maklumat Asas &amp; Visual Poster
+                      </span>
+                    </div>
+                    <span className="w-6 h-6 rounded-md bg-white border border-purple-200/80 flex items-center justify-center text-[#5B18E5] shrink-0">
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                          openPostSections.s1 ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  {openPostSections.s1 && (
+                    <div className="space-y-2.5 pt-0.5">
+                      {/* Poster Mode Switcher: Default Muat Naik + Preset UMS (No URL) */}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                          Sumber Poster Utama
+                        </span>
+                        <div className="inline-flex items-center p-0.5 rounded-lg bg-[#EFEAFF] border border-purple-200/80 text-[10px] font-extrabold">
+                          {(
+                            [
+                              {id: 'upload', label: 'Muat Naik'},
+                              {id: 'preset', label: 'Preset UMS'},
+                            ] as const
+                          ).map((m) => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => setNewBannerMode(m.id)}
+                              className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                                newBannerMode === m.id
+                                  ? 'bg-[#5B18E5] text-white shadow-xs'
+                                  : 'text-[#5B18E5] hover:bg-purple-100/60'
+                              }`}
+                            >
+                              {m.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Poster Selector Controls */}
+                      {newBannerMode === 'upload' && (
+                        <label className="w-full py-2 px-3 rounded-lg border border-dashed border-purple-300 bg-white/80 hover:bg-purple-50/60 text-[#5B18E5] font-extrabold text-[10.5px] flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>
+                            {newBannerUrl.startsWith('data:')
+                              ? 'Tukar Fail Poster dari Peranti'
+                              : 'Pilih Fail Poster dari Peranti (JPG/PNG)'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              try {
+                                const dataUrl =
+                                  await compressImageFileToDataUrl(
+                                    file,
+                                    900,
+                                    500,
+                                    0.84
+                                  );
+                                setNewBannerUrl(dataUrl);
+                                notifyToast(
+                                  'Gambar Poster Dimuat Naik',
+                                  'Pralihat telah dikemas kini.',
+                                  'success'
+                                );
+                              } catch {
+                                notifyToast(
+                                  'Gagal Memuat Naik Gambar',
+                                  'Sila cuba fail gambar yang lain.',
+                                  'error'
+                                );
+                              }
+                            }}
+                          />
+                        </label>
+                      )}
+
+                      {newBannerMode === 'upload' && newBannerUrl.trim() && (
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="font-bold text-slate-500 shrink-0">
+                            Fokus Y ({newBannerPosY}%):
+                          </span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={newBannerPosY}
+                            onChange={(e) =>
+                              setNewBannerPosY(Number(e.target.value))
+                            }
+                            className="flex-1 accent-[#5B18E5] h-1"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewBannerUrl('');
+                            }}
+                            className="text-rose-600 font-extrabold hover:underline shrink-0 cursor-pointer"
+                          >
+                            Padam
+                          </button>
+                        </div>
+                      )}
+
+                      {newBannerMode === 'preset' && (
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {UMS_BANNER_PRESETS.map((preset) => {
+                            const selected = newBannerPreset === preset.id;
+                            return (
+                              <button
+                                key={preset.id}
+                                type="button"
+                                onClick={() => setNewBannerPreset(preset.id)}
+                                className={`overflow-hidden rounded-md border text-left transition-all cursor-pointer ${
+                                  selected
+                                    ? 'border-[#5B18E5] bg-[#F3EEFF]'
+                                    : 'border-purple-100 bg-white opacity-80 hover:opacity-100'
+                                }`}
+                              >
+                                <div className="relative h-9 w-full overflow-hidden bg-[#1E0842]">
+                                  <ActivityCardBanner cardId={preset.id} />
+                                </div>
+                                <div className="px-1.5 py-1">
+                                  <div className="text-[9.5px] font-extrabold text-[#14122E] truncate">
+                                    {preset.label}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Compact Multi-Image Catalog Row (Upload Only) */}
+                      <div className="pt-1.5 border-t border-purple-100 flex items-center justify-between gap-2">
+                        <label className="px-2.5 py-1 rounded-md bg-[#F3EEFF] hover:bg-[#E7DDFC] border border-purple-200/80 text-[10px] font-extrabold text-[#5B18E5] flex items-center gap-1.5 cursor-pointer transition-colors">
+                          <Upload className="w-3 h-3" />
+                          <span>
+                            + Lampirkan Katalog Gambar (
+                            {newDraftGalleryImages.length})
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={async (e) => {
+                              const files = Array.from(e.target.files || []);
+                              if (files.length === 0) return;
+                              const uploadedItems: ProjectGalleryItem[] = [];
+                              for (let i = 0; i < files.length; i++) {
+                                try {
+                                  const dataUrl =
+                                    await compressImageFileToDataUrl(
+                                      files[i],
+                                      1000,
+                                      1000,
+                                      0.86
+                                    );
+                                  uploadedItems.push({
+                                    id: `draft-gal-${Date.now()}-${i}`,
+                                    url: dataUrl,
+                                    caption:
+                                      newTitle.trim() || 'Poster Aktiviti',
+                                  });
+                                } catch {
+                                  // Ignore failed file
+                                }
+                              }
+                              if (uploadedItems.length > 0) {
+                                setNewDraftGalleryImages((prev) => [
+                                  ...prev,
+                                  ...uploadedItems,
+                                ]);
+                                notifyToast(
+                                  `${uploadedItems.length} Gambar Ditambah`,
+                                  'Katalog sedia dipaparkan.',
+                                  'success'
+                                );
+                              }
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        {newDraftGalleryImages.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setNewDraftGalleryImages([])}
+                            className="text-[9.5px] font-bold text-rose-600 hover:underline cursor-pointer"
+                          >
+                            Kosongkan Katalog
+                          </button>
+                        )}
+                      </div>
+
+                      {newDraftGalleryImages.length > 0 && (
+                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
+                          {newDraftGalleryImages.map((gItem, idx) => (
+                            <div
+                              key={gItem.id}
+                              className="relative w-12 h-12 rounded overflow-hidden bg-[#19063B] shrink-0"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={gItem.url}
+                                alt={`Gambar ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setNewDraftGalleryImages((prev) =>
+                                    prev.filter((x) => x.id !== gItem.id)
+                                  )
+                                }
+                                className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center text-[9px] font-bold cursor-pointer"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Title & Category / Badges in Compact Grid */}
+                      <div>
+                        <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                          Tajuk Aktiviti / Projek UMS *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={newTitle}
+                          onChange={(e) => setNewTitle(e.target.value)}
+                          placeholder="cth. Borneo AI & Smart Campus Hackathon 2026"
+                          className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[12px] font-bold text-[#14122E] placeholder:text-slate-400 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2.5">
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Kategori
+                          </label>
+                          <select
+                            value={newType}
+                            onChange={(e) => {
+                              const val = e.target.value as ProjectType;
+                              setNewType(val);
+                              setNewTag3(val);
+                            }}
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-bold text-[#14122E] focus:outline-none"
+                          >
+                            <option value="Competition">Competition</option>
+                            <option value="Innovation">Innovation</option>
+                            <option value="Community">Community</option>
+                            <option value="Assignment">Assignment</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Lencana 1
+                          </label>
+                          <input
+                            type="text"
+                            value={newBadgeLine1}
+                            onChange={(e) => setNewBadgeLine1(e.target.value)}
+                            placeholder="Program"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Lencana 2
+                          </label>
+                          <input
+                            type="text"
+                            value={newBadgeLine2}
+                            onChange={(e) => setNewBadgeLine2(e.target.value)}
+                            placeholder="FKI / Kampus"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                          Penerangan &amp; Objektif Aktiviti *
+                        </label>
+                        <textarea
+                          rows={2}
+                          required
+                          value={newDesc}
+                          onChange={(e) => setNewDesc(e.target.value)}
+                          placeholder="Terangkan objektif program, peranan ahli yang dicari, atau hebahan pensyarah/kelab..."
+                          className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-medium leading-snug focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 mb-0.5">
+                          3 Tag Sorotan Kad (Senarai Rasmi UMS)
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <select
+                            value={newTag1}
+                            onChange={(e) => setNewTag1(e.target.value)}
+                            aria-label="Tag Sorotan Kad 1"
+                            className="border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[10.5px] font-bold text-[#14122E] focus:outline-none"
+                          >
+                            {OFFICIAL_CARD_HIGHLIGHT_TAGS.map((tagOpt) => (
+                              <option key={`t1-${tagOpt}`} value={tagOpt}>
+                                {tagOpt}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={newTag2}
+                            onChange={(e) => setNewTag2(e.target.value)}
+                            aria-label="Tag Sorotan Kad 2"
+                            className="border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[10.5px] font-bold text-[#14122E] focus:outline-none"
+                          >
+                            {OFFICIAL_CARD_HIGHLIGHT_TAGS.map((tagOpt) => (
+                              <option key={`t2-${tagOpt}`} value={tagOpt}>
+                                {tagOpt}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={newTag3}
+                            onChange={(e) => setNewTag3(e.target.value)}
+                            aria-label="Tag Sorotan Kad 3"
+                            className="border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[10.5px] font-bold text-[#14122E] focus:outline-none"
+                          >
+                            {OFFICIAL_CARD_HIGHLIGHT_TAGS.map((tagOpt) => (
+                              <option key={`t3-${tagOpt}`} value={tagOpt}>
+                                {tagOpt}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </div>
                     </div>
-
-                    <p className="text-[11px] text-slate-600 line-clamp-2 leading-snug">
-                      {newDesc.trim() ||
-                        'Penerangan terperinci & objektif aktiviti akan dipaparkan di sini...'}
-                    </p>
-
-                    {/* Live 40/25/20/15 Mini Breakdown */}
-                    <div className="pt-1.5 border-t border-purple-200/60 grid grid-cols-4 gap-1 text-center text-[9.5px] font-bold text-[#4E14B8]">
-                      <div className="rounded-lg bg-white py-1 px-1">
-                        Kemahiran: {liveDraftMatchEval.skillScore}/40
-                      </div>
-                      <div className="rounded-lg bg-white py-1 px-1">
-                        Minat: {liveDraftMatchEval.interestScore}/25
-                      </div>
-                      <div className="rounded-lg bg-white py-1 px-1">
-                        Jadual: {liveDraftMatchEval.scheduleScore}/20
-                      </div>
-                      <div className="rounded-lg bg-white py-1 px-1">
-                        Tag: {liveDraftMatchEval.goalScore}/15
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* SECTION 01: MAKLUMAT ASAS, GAMBAR POSTER, KATEGORI & LENCANA FAKULTI */}
-              <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.2)] space-y-3 text-[#14122E] text-xs">
-                <div>
-                  <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                    01. Gambar Poster, Maklumat Asas &amp; Lencana
-                  </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Tetapkan gambar poster kad aktiviti (muat naik sendiri, URL, atau preset UMS) berserta tajuk dan lencana
-                  </p>
-                </div>
-
-                {/* POSTER / BANNER IMAGE PICKER (Upload / URL / UMS Presets) */}
-                <div className="p-3 rounded-2xl bg-[#F7F4FF] border border-purple-200/80 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-extrabold text-[#3B0A88] flex items-center gap-1.5">
-                      <Camera className="w-3.5 h-3.5 text-[#5B18E5]" />
-                      <span>Gambar Poster Aktiviti</span>
-                    </span>
-                    <div className="inline-flex rounded-xl bg-white p-0.5 border border-purple-200 text-[10px] font-extrabold">
-                      <button
-                        type="button"
-                        onClick={() => setNewBannerMode('upload')}
-                        className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                          newBannerMode === 'upload'
-                            ? 'bg-[#5B18E5] text-white'
-                            : 'text-slate-600'
-                        }`}
-                      >
-                        Muat Naik
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewBannerMode('url')}
-                        className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                          newBannerMode === 'url'
-                            ? 'bg-[#5B18E5] text-white'
-                            : 'text-slate-600'
-                        }`}
-                      >
-                        URL
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNewBannerMode('preset')}
-                        className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                          newBannerMode === 'preset'
-                            ? 'bg-[#5B18E5] text-white'
-                            : 'text-slate-600'
-                        }`}
-                      >
-                        Preset UMS
-                      </button>
-                    </div>
-                  </div>
-
-                  {newBannerMode === 'upload' && (
-                    <div className="space-y-2">
-                      <label className="w-full py-2.5 px-3 rounded-xl border-2 border-dashed border-purple-300 bg-white hover:bg-purple-50/60 text-[#5B18E5] font-extrabold text-center flex items-center justify-center gap-2 cursor-pointer transition-colors">
-                        <Camera className="w-4 h-4" />
-                        <span>
-                          {newBannerUrl.startsWith('data:')
-                            ? 'Tukar Fail Gambar dari Peranti'
-                            : 'Pilih Gambar Poster dari Peranti (JPG/PNG)'}
-                        </span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            try {
-                              const dataUrl = await compressImageFileToDataUrl(
-                                file,
-                                900,
-                                500,
-                                0.84
-                              );
-                              setNewBannerUrl(dataUrl);
-                              notifyToast(
-                                'Gambar Poster Dimuat Naik',
-                                'Pralihat kad di atas telah dikemas kini.',
-                                'success'
-                              );
-                            } catch {
-                              notifyToast(
-                                'Gagal Memuat Naik Gambar',
-                                'Sila cuba fail gambar yang lain.',
-                                'error'
-                              );
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
                   )}
+                </div>
 
-                  {newBannerMode === 'url' && (
-                    <div className="space-y-1.5">
-                      <input
-                        type="url"
-                        value={
-                          newBannerUrl.startsWith('data:') ? '' : newBannerUrl
-                        }
-                        onChange={(e) => setNewBannerUrl(e.target.value)}
-                        placeholder="Tampal pautan URL gambar (https://...)"
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-semibold focus:outline-none focus:border-[#5B18E5]"
+                {/* SECTION 02: LOGISTIK KAMPUS, TARIKH, SASARAN & KUOTA */}
+                <div className="px-3.5 py-2.5 space-y-2.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => togglePostSection('s2')}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#F3EEFF] via-[#F7F4FF] to-white border border-purple-200/90 shadow-[0_1px_3px_rgba(91,24,229,0.06)] flex items-center justify-between gap-2 hover:border-[#5B18E5]/50 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex items-center justify-center min-w-[26px] h-5 px-1.5 rounded-md bg-gradient-to-br from-[#5B18E5] to-[#4310B8] text-white text-[10px] font-extrabold tracking-wider shadow-[0_2px_6px_rgba(91,24,229,0.25)] shrink-0">
+                        02
+                      </span>
+                      <span className="text-[11px] font-extrabold font-display uppercase tracking-wide text-[#14122E] truncate">
+                        Logistik Kampus &amp; Kuota
+                      </span>
+                    </div>
+                    <span className="w-6 h-6 rounded-md bg-white border border-purple-200/80 flex items-center justify-center text-[#5B18E5] shrink-0">
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                          openPostSections.s2 ? 'rotate-180' : ''
+                        }`}
                       />
+                    </span>
+                  </button>
+
+                  {openPostSections.s2 && (
+                    <div className="space-y-2.5 pt-0.5">
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Tarikh Program
+                          </label>
+                          <input
+                            type="text"
+                            value={newDateText}
+                            onChange={(e) => setNewDateText(e.target.value)}
+                            placeholder="cth. 22 – 24 Nov 2026"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Tarikh Tutup
+                          </label>
+                          <input
+                            type="date"
+                            value={newDeadline}
+                            onChange={(e) => setNewDeadline(e.target.value)}
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Lokasi Kampus UMS
+                          </label>
+                          <input
+                            type="text"
+                            value={newLocationText}
+                            onChange={(e) => setNewLocationText(e.target.value)}
+                            placeholder="DKP 2 / Makmal AI FKI"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Sasaran Pelajar
+                          </label>
+                          <input
+                            type="text"
+                            value={newAudience}
+                            onChange={(e) => setNewAudience(e.target.value)}
+                            placeholder="Semua pelajar FKI & UMS"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Kekosongan Ahli (Slot)
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={newSlotsNeeded}
+                            onChange={(e) =>
+                              setNewSlotsNeeded(
+                                Math.max(1, Number(e.target.value) || 4)
+                              )
+                            }
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-bold tabular-nums focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Komitmen (Jam / Minggu)
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={40}
+                            value={newMinWeeklyHours}
+                            onChange={(e) =>
+                              setNewMinWeeklyHours(
+                                Math.max(1, Number(e.target.value) || 6)
+                              )
+                            }
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-bold tabular-nums focus:outline-none"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
+                </div>
 
-                  {newBannerMode !== 'preset' && newBannerUrl.trim() && (
-                    <div className="space-y-1.5 pt-1 border-t border-purple-200/60">
-                      <div className="flex items-center justify-between text-[10.5px]">
-                        <span className="font-bold text-slate-600">
-                          Fokus Menegak Poster ({newBannerPosY}%)
-                        </span>
+                {/* SECTION 03: SYARAT KEMAHIRAN (OPTIONAL COLLAPSIBLE DROPDOWN) */}
+                <div className="px-3.5 py-2.5 space-y-2.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => togglePostSection('s3')}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#F3EEFF] via-[#F7F4FF] to-white border border-purple-200/90 shadow-[0_1px_3px_rgba(91,24,229,0.06)] flex items-center justify-between gap-2 hover:border-[#5B18E5]/50 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex items-center justify-center min-w-[26px] h-5 px-1.5 rounded-md bg-gradient-to-br from-[#5B18E5] to-[#4310B8] text-white text-[10px] font-extrabold tracking-wider shadow-[0_2px_6px_rgba(91,24,229,0.25)] shrink-0">
+                        03
+                      </span>
+                      <span className="text-[11px] font-extrabold font-display uppercase tracking-wide text-[#14122E] truncate">
+                        Syarat Kemahiran
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded-md bg-amber-100 border border-amber-300/80 text-amber-900 text-[9px] font-extrabold shrink-0">
+                        Pilihan (Optional)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[9.5px] font-bold text-slate-500 tabular-nums">
+                        {newRequiredSkills.length > 0
+                          ? `${newRequiredSkills.length} dipilih`
+                          : 'Buka'}
+                      </span>
+                      <span className="w-6 h-6 rounded-md bg-white border border-purple-200/80 flex items-center justify-center text-[#5B18E5]">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                            openPostSections.s3 ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </span>
+                    </div>
+                  </button>
+
+                  {openPostSections.s3 && (
+                    <div className="space-y-2.5 pt-1">
+                      <p className="text-[10px] text-slate-500 leading-snug">
+                        Bahagian ini <strong>tidak wajib</strong>. Pilih daripada
+                        katalog kemahiran rasmi merangkumi semua bidang UMS, atau
+                        biarkan kosong jika terbuka kepada semua pelajar.
+                      </p>
+
+                      {/* Grouped Official Dropdown Selector */}
+                      <div className="flex items-center gap-2">
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const selectedSkillId = e.target.value;
+                            if (!selectedSkillId) return;
+                            if (
+                              newRequiredSkills.some(
+                                (r) => r.skill_id === selectedSkillId
+                              )
+                            ) {
+                              return;
+                            }
+                            setNewRequiredSkills((prev) => [
+                              ...prev,
+                              {
+                                skill_id: selectedSkillId,
+                                mandatory: postSkillMandatory,
+                                importance: postSkillImportance,
+                              },
+                            ]);
+                          }}
+                          className="flex-1 border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-bold text-[#14122E] focus:outline-none"
+                        >
+                          <option value="">
+                            ▾ Pilih terus daripada katalog kemahiran rasmi UMS...
+                          </option>
+                          {SKILL_CATEGORIES.map((cat) => (
+                            <optgroup key={cat} label={cat}>
+                              {skills
+                                .filter((s) => s.category === cat)
+                                .map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.name}
+                                  </option>
+                                ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Category Filter Tabs + Search Within Official Skills Catalog */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                          {['Semua', ...SKILL_CATEGORIES].map((cat) => {
+                            const active = skillPickerCategory === cat;
+                            return (
+                              <button
+                                key={`post-sk-cat-${cat}`}
+                                type="button"
+                                onClick={() => setSkillPickerCategory(cat)}
+                                className={`px-2 py-0.5 rounded-md text-[9.5px] font-extrabold whitespace-nowrap cursor-pointer transition-colors ${
+                                  active
+                                    ? 'bg-[#5B18E5] text-white'
+                                    : 'bg-[#F3EEFF] text-[#4C14B8] hover:bg-[#E7DDFC]'
+                                }`}
+                              >
+                                {cat}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <input
+                          type="search"
+                          value={skillPickerQuery}
+                          onChange={(e) => setSkillPickerQuery(e.target.value)}
+                          placeholder="Cari dalam senarai kemahiran rasmi UMS..."
+                          className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[10.5px] font-semibold focus:outline-none"
+                        />
+
+                        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto no-scrollbar pt-0.5">
+                          {skills
+                            .filter(
+                              (s) =>
+                                (skillPickerCategory === 'Semua' ||
+                                  s.category === skillPickerCategory) &&
+                                (!skillPickerQuery.trim() ||
+                                  s.name
+                                    .toLowerCase()
+                                    .includes(
+                                      skillPickerQuery.trim().toLowerCase()
+                                    ) ||
+                                  s.category
+                                    .toLowerCase()
+                                    .includes(
+                                      skillPickerQuery.trim().toLowerCase()
+                                    ))
+                            )
+                            .map((s) => {
+                              const selected = newRequiredSkills.some(
+                                (r) => r.skill_id === s.id
+                              );
+                              return (
+                                <button
+                                  key={`post-sk-chip-${s.id}`}
+                                  type="button"
+                                  onClick={() =>
+                                    setNewRequiredSkills((prev) =>
+                                      prev.some((r) => r.skill_id === s.id)
+                                        ? prev.filter(
+                                            (r) => r.skill_id !== s.id
+                                          )
+                                        : [
+                                            ...prev,
+                                            {
+                                              skill_id: s.id,
+                                              mandatory: postSkillMandatory,
+                                              importance: postSkillImportance,
+                                            },
+                                          ]
+                                    )
+                                  }
+                                  className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold cursor-pointer transition-colors ${
+                                    selected
+                                      ? 'bg-[#5B18E5] border-[#5B18E5] text-white'
+                                      : 'bg-white border-purple-200/80 text-slate-600 hover:border-purple-300'
+                                  }`}
+                                >
+                                  {selected ? `✓ ${s.name}` : `+ ${s.name}`}
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+
+                      {/* Active Required Skills as Compact Hairline Rows */}
+                      {newRequiredSkills.length > 0 && (
+                        <div className="divide-y divide-purple-100 border-y border-purple-100">
+                          {newRequiredSkills.map((req) => {
+                            const skObj = skills.find(
+                              (s) => s.id === req.skill_id
+                            );
+                            return (
+                              <div
+                                key={req.skill_id}
+                                className="py-1.5 flex items-center justify-between gap-2"
+                              >
+                                <span className="font-bold text-[#14122E] truncate">
+                                  {skObj?.name || req.skill_id}
+                                </span>
+
+                                <div className="flex items-center gap-2 shrink-0 text-[10px]">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNewRequiredSkills((prev) =>
+                                        prev.map((item) =>
+                                          item.skill_id === req.skill_id
+                                            ? {
+                                                ...item,
+                                                mandatory: !item.mandatory,
+                                              }
+                                            : item
+                                        )
+                                      )
+                                    }
+                                    className={`px-1.5 py-0.5 rounded font-extrabold cursor-pointer ${
+                                      req.mandatory
+                                        ? 'bg-[#F3EEFF] text-[#5B18E5]'
+                                        : 'bg-slate-100 text-slate-600'
+                                    }`}
+                                  >
+                                    {req.mandatory ? 'Utama' : 'Pilihan'}
+                                  </button>
+
+                                  <select
+                                    value={req.importance}
+                                    onChange={(e) => {
+                                      const imp = Number(e.target.value) as
+                                        | 1
+                                        | 2
+                                        | 3
+                                        | 4
+                                        | 5;
+                                      setNewRequiredSkills((prev) =>
+                                        prev.map((item) =>
+                                          item.skill_id === req.skill_id
+                                            ? {...item, importance: imp}
+                                            : item
+                                        )
+                                      );
+                                    }}
+                                    aria-label="Tahap kepentingan kemahiran"
+                                    className="bg-transparent font-bold text-slate-700 focus:outline-none"
+                                  >
+                                    {[1, 2, 3, 4, 5].map((lvl) => (
+                                      <option key={lvl} value={lvl}>
+                                        {lvl}/5
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNewRequiredSkills((prev) =>
+                                        prev.filter(
+                                          (item) =>
+                                            item.skill_id !== req.skill_id
+                                        )
+                                      )
+                                    }
+                                    className="text-rose-600 hover:underline font-bold cursor-pointer"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION 04: BIDANG MINAT & TAG PENAPIS HOME (OFFICIAL PREDETERMINED CATALOG) */}
+                <div className="px-3.5 py-2.5 space-y-2.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => togglePostSection('s4')}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#F3EEFF] via-[#F7F4FF] to-white border border-purple-200/90 shadow-[0_1px_3px_rgba(91,24,229,0.06)] flex items-center justify-between gap-2 hover:border-[#5B18E5]/50 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex items-center justify-center min-w-[26px] h-5 px-1.5 rounded-md bg-gradient-to-br from-[#5B18E5] to-[#4310B8] text-white text-[10px] font-extrabold tracking-wider shadow-[0_2px_6px_rgba(91,24,229,0.25)] shrink-0">
+                        04
+                      </span>
+                      <span className="text-[11px] font-extrabold font-display uppercase tracking-wide text-[#14122E] truncate">
+                        Bidang Minat &amp; Tag Carian Rasmi
+                      </span>
+                    </div>
+                    <span className="w-6 h-6 rounded-md bg-white border border-purple-200/80 flex items-center justify-center text-[#5B18E5] shrink-0">
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                          openPostSections.s4 ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  {openPostSections.s4 && (
+                    <div className="space-y-2.5 pt-0.5">
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                        {['Semua', ...INTEREST_CATEGORIES].map((cat) => {
+                          const active = interestPickerCategory === cat;
+                          return (
+                            <button
+                              key={`post-in-cat-${cat}`}
+                              type="button"
+                              onClick={() => setInterestPickerCategory(cat)}
+                              className={`px-2 py-0.5 rounded-md text-[9.5px] font-extrabold whitespace-nowrap cursor-pointer transition-colors ${
+                                active
+                                  ? 'bg-[#5B18E5] text-white'
+                                  : 'bg-[#F3EEFF] text-[#4C14B8] hover:bg-[#E7DDFC]'
+                              }`}
+                            >
+                              {cat}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <input
+                        type="search"
+                        value={interestPickerQuery}
+                        onChange={(e) => setInterestPickerQuery(e.target.value)}
+                        placeholder="Cari topik minat rasmi UMS..."
+                        className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[10.5px] font-semibold focus:outline-none"
+                      />
+
+                      <div className="flex flex-wrap gap-1.5 text-[10px] max-h-28 overflow-y-auto no-scrollbar">
+                        {interests
+                          .filter(
+                            (i) =>
+                              (interestPickerCategory === 'Semua' ||
+                                i.category === interestPickerCategory) &&
+                              (!interestPickerQuery.trim() ||
+                                i.name
+                                  .toLowerCase()
+                                  .includes(
+                                    interestPickerQuery.trim().toLowerCase()
+                                  ))
+                          )
+                          .map((intrObj) => {
+                            const active =
+                              newProjectInterests.includes(intrObj.id) ||
+                              newProjectInterests.includes(intrObj.name);
+                            return (
+                              <button
+                                key={intrObj.id}
+                                type="button"
+                                onClick={() =>
+                                  setNewProjectInterests((prev) =>
+                                    prev.includes(intrObj.id) ||
+                                    prev.includes(intrObj.name)
+                                      ? prev.filter(
+                                          (id) =>
+                                            id !== intrObj.id &&
+                                            id !== intrObj.name
+                                        )
+                                      : [...prev, intrObj.id]
+                                  )
+                                }
+                                className={`px-2 py-0.5 rounded-md border font-extrabold cursor-pointer transition-colors ${
+                                  active
+                                    ? 'bg-[#5B18E5] border-[#5B18E5] text-white'
+                                    : 'bg-white border-purple-200/80 text-slate-600 hover:border-purple-300'
+                                }`}
+                              >
+                                {active
+                                  ? `✓ ${intrObj.name}`
+                                  : `+ ${intrObj.name}`}
+                              </button>
+                            );
+                          })}
+                      </div>
+
+                      <div className="pt-1.5 border-t border-purple-100 space-y-2">
+                        {(
+                          [
+                            'Kemahiran & Bidang',
+                            'Gaya Kerja & Pasukan',
+                          ] as const
+                        ).map((grp) => (
+                          <div key={grp} className="space-y-1">
+                            <div className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                              Tag Penapis ({grp}):
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 text-[10px]">
+                              {OFFICIAL_FILTER_TAGS.filter(
+                                (item) => item.group === grp
+                              ).map((item) => {
+                                const active = newAttributeTags.includes(
+                                  item.label
+                                );
+                                return (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setNewAttributeTags((prev) =>
+                                        prev.includes(item.label)
+                                          ? prev.filter((a) => a !== item.label)
+                                          : [...prev, item.label]
+                                      )
+                                    }
+                                    className={`px-2 py-0.5 rounded-md border font-extrabold cursor-pointer transition-colors ${
+                                      active
+                                        ? 'bg-[#141132] border-[#141132] text-white'
+                                        : 'bg-white border-purple-200/80 text-slate-600 hover:border-purple-300'
+                                    }`}
+                                  >
+                                    {active
+                                      ? `✓ ${item.label}`
+                                      : `+ ${item.label}`}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION 05: JADUAL PERJUMPAAN & WHATSAPP PENGANJUR */}
+                <div className="px-3.5 py-2.5 space-y-2.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => togglePostSection('s5')}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#F3EEFF] via-[#F7F4FF] to-white border border-purple-200/90 shadow-[0_1px_3px_rgba(91,24,229,0.06)] flex items-center justify-between gap-2 hover:border-[#5B18E5]/50 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex items-center justify-center min-w-[26px] h-5 px-1.5 rounded-md bg-gradient-to-br from-[#5B18E5] to-[#4310B8] text-white text-[10px] font-extrabold tracking-wider shadow-[0_2px_6px_rgba(91,24,229,0.25)] shrink-0">
+                        05
+                      </span>
+                      <span className="text-[11px] font-extrabold font-display uppercase tracking-wide text-[#14122E] truncate">
+                        Jadual Mingguan &amp; WhatsApp Penganjur
+                      </span>
+                    </div>
+                    <span className="w-6 h-6 rounded-md bg-white border border-purple-200/80 flex items-center justify-center text-[#5B18E5] shrink-0">
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                          openPostSections.s5 ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  {openPostSections.s5 && (
+                    <div className="space-y-2.5 pt-0.5">
+                      {newMeetingSlots.length > 0 && (
+                        <div className="divide-y divide-purple-100 border-y border-purple-100">
+                          {newMeetingSlots.map((slot, idx) => (
+                            <div
+                              key={`${slot.weekday}-${slot.start_time}-${idx}`}
+                              className="py-1.5 flex items-center justify-between text-[10.5px]"
+                            >
+                              <span className="font-bold text-[#14122E] tabular-nums">
+                                {WEEKDAY_SHORT[slot.weekday]} ·{' '}
+                                {slot.start_time} – {slot.end_time}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setNewMeetingSlots((prev) =>
+                                    prev.filter((_, i) => i !== idx)
+                                  )
+                                }
+                                className="text-rose-600 font-bold hover:underline cursor-pointer"
+                              >
+                                Padam
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 text-[10.5px]">
+                        <select
+                          value={postSlotDay}
+                          onChange={(e) =>
+                            setPostSlotDay(Number(e.target.value))
+                          }
+                          className="border-b border-purple-200 bg-transparent py-1 font-bold focus:outline-none"
+                        >
+                          {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                            <option key={d} value={d}>
+                              {WEEKDAY_SHORT[d]}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="time"
+                          value={postSlotStart}
+                          onChange={(e) => setPostSlotStart(e.target.value)}
+                          className="flex-1 border-b border-purple-200 bg-transparent py-1 tabular-nums focus:outline-none"
+                        />
+                        <span>–</span>
+                        <input
+                          type="time"
+                          value={postSlotEnd}
+                          onChange={(e) => setPostSlotEnd(e.target.value)}
+                          className="flex-1 border-b border-purple-200 bg-transparent py-1 tabular-nums focus:outline-none"
+                        />
                         <button
                           type="button"
                           onClick={() => {
-                            setNewBannerUrl('');
-                            setNewBannerMode('preset');
+                            if (postSlotStart >= postSlotEnd) {
+                              notifyToast(
+                                'Masa Tidak Sah',
+                                'Masa mula mestilah lebih awal daripada masa tamat.',
+                                'error'
+                              );
+                              return;
+                            }
+                            setNewMeetingSlots((prev) => [
+                              ...prev,
+                              {
+                                weekday: postSlotDay,
+                                start_time: postSlotStart,
+                                end_time: postSlotEnd,
+                              },
+                            ]);
                           }}
-                          className="text-rose-600 font-extrabold hover:underline cursor-pointer"
+                          className="px-2.5 py-1 rounded-md bg-[#F3EEFF] hover:bg-[#E5DCFF] text-[10px] font-extrabold text-[#5B18E5] shrink-0 cursor-pointer"
                         >
-                          Buang Gambar Suai
+                          + Slot
                         </button>
                       </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={newBannerPosY}
-                        onChange={(e) =>
-                          setNewBannerPosY(Number(e.target.value))
-                        }
-                        className="w-full accent-[#5B18E5]"
-                      />
-                    </div>
-                  )}
 
-                  {newBannerMode === 'preset' && (
-                    <div className="grid grid-cols-3 gap-2 pt-0.5">
-                      {UMS_BANNER_PRESETS.map((preset) => {
-                        const selected = newBannerPreset === preset.id;
-                        return (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            onClick={() => setNewBannerPreset(preset.id)}
-                            className={`rounded-xl overflow-hidden border-2 text-left transition-all cursor-pointer ${
-                              selected
-                                ? 'border-[#5B18E5] ring-2 ring-purple-300'
-                                : 'border-white opacity-85 hover:opacity-100'
-                            }`}
-                          >
-                            <div className="relative h-12 w-full overflow-hidden bg-[#1E0842]">
-                              <ActivityCardBanner cardId={preset.id} />
-                            </div>
-                            <div className="p-1.5 bg-white">
-                              <div className="text-[10px] font-extrabold text-[#14122E] truncate">
-                                {preset.label}
-                              </div>
-                              <div className="text-[8.5px] text-slate-500 truncate">
-                                {preset.subtitle}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block font-extrabold mb-1">
-                    Tajuk Aktiviti / Projek UMS *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="cth. Borneo AI & Smart Campus Hackathon 2026"
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold focus:outline-none focus:border-[#5B18E5]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Kategori Projek
-                    </label>
-                    <select
-                      value={newType}
-                      onChange={(e) => {
-                        const val = e.target.value as ProjectType;
-                        setNewType(val);
-                        setNewTag3(val);
-                      }}
-                      className="w-full rounded-xl border border-slate-300 px-2.5 py-2 font-bold bg-white"
-                    >
-                      <option value="Competition">Competition</option>
-                      <option value="Innovation">Innovation</option>
-                      <option value="Community">Community</option>
-                      <option value="Assignment">Assignment</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Lencana Baris 1
-                    </label>
-                    <input
-                      type="text"
-                      value={newBadgeLine1}
-                      onChange={(e) => setNewBadgeLine1(e.target.value)}
-                      placeholder="Program"
-                      className="w-full rounded-xl border border-slate-300 px-2.5 py-2 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Lencana Baris 2
-                    </label>
-                    <input
-                      type="text"
-                      value={newBadgeLine2}
-                      onChange={(e) => setNewBadgeLine2(e.target.value)}
-                      placeholder="FKI / Kampus"
-                      className="w-full rounded-xl border border-slate-300 px-2.5 py-2 font-semibold"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-extrabold mb-1">
-                    Penerangan Terperinci &amp; Objektif Aktiviti *
-                  </label>
-                  <textarea
-                    rows={3}
-                    required
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                    placeholder="Terangkan objektif program, peranan ahli kumpulan yang dicari, dan manfaat penyertaan..."
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 font-medium focus:outline-none focus:border-[#5B18E5]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-extrabold mb-1">
-                    3 Tag Utama Kad (Dipaparkan pada kad Home &amp; Halaman Info)
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      type="text"
-                      value={newTag1}
-                      onChange={(e) => setNewTag1(e.target.value)}
-                      placeholder="Tag 1 (Tech)"
-                      className="rounded-xl border border-slate-300 px-2.5 py-1.5 font-semibold"
-                    />
-                    <input
-                      type="text"
-                      value={newTag2}
-                      onChange={(e) => setNewTag2(e.target.value)}
-                      placeholder="Tag 2 (Networking)"
-                      className="rounded-xl border border-slate-300 px-2.5 py-1.5 font-semibold"
-                    />
-                    <input
-                      type="text"
-                      value={newTag3}
-                      onChange={(e) => setNewTag3(e.target.value)}
-                      placeholder="Tag 3 (Competition)"
-                      className="rounded-xl border border-slate-300 px-2.5 py-1.5 font-semibold"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* SECTION 02: LOGISTIK KAMPUS, TARIKH, SASARAN & KUOTA */}
-              <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.2)] space-y-3 text-[#14122E] text-xs">
-                <div>
-                  <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                    02. Logistik Kampus, Sasaran &amp; Kuota Ahli
-                  </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Tarikh program, lokasi di UMS, sasaran pelajar, serta bilangan kekosongan ahli
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Tarikh &amp; Tempoh Program
-                    </label>
-                    <input
-                      type="text"
-                      value={newDateText}
-                      onChange={(e) => setNewDateText(e.target.value)}
-                      placeholder="cth. 22 – 24 Nov 2026"
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Tarikh Tutup Permohonan
-                    </label>
-                    <input
-                      type="date"
-                      value={newDeadline}
-                      onChange={(e) => setNewDeadline(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-2.5 py-2 font-semibold"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-extrabold mb-1">
-                    Lokasi Kampus UMS
-                  </label>
-                  <input
-                    type="text"
-                    value={newLocationText}
-                    onChange={(e) => setNewLocationText(e.target.value)}
-                    placeholder="cth. Dewan Kuliah Pusat 2 / Makmal AI FKI, UMS"
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-extrabold mb-1">
-                    Sasaran Penyertaan Pelajar (Audience)
-                  </label>
-                  <input
-                    type="text"
-                    value={newAudience}
-                    onChange={(e) => setNewAudience(e.target.value)}
-                    placeholder="cth. Terbuka kepada semua pelajar FKI & UMS"
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Kekosongan Ahli (Slots Needed)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      value={newSlotsNeeded}
-                      onChange={(e) =>
-                        setNewSlotsNeeded(Math.max(1, Number(e.target.value) || 4))
-                      }
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2 font-bold tabular-nums"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Komitmen Masa (Jam / Minggu)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={40}
-                      value={newMinWeeklyHours}
-                      onChange={(e) =>
-                        setNewMinWeeklyHours(
-                          Math.max(1, Number(e.target.value) || 6)
-                        )
-                      }
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2 font-bold tabular-nums"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* SECTION 03: SYARAT KEMAHIRAN PROJEK (40% SKOR PADANAN) */}
-              <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.2)] space-y-3 text-[#14122E] text-xs">
-                <div>
-                  <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                    03. Syarat Kemahiran Projek (Pecahan Skor 40%)
-                  </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Tetapkan kemahiran yang diperlukan berserta status Wajib/Pilihan dan tahap kepentingan (1–5)
-                  </p>
-                </div>
-
-                {/* Current Required Skills List */}
-                <div className="space-y-2">
-                  {newRequiredSkills.length === 0 ? (
-                    <div className="p-3 rounded-xl bg-slate-50 text-slate-500 text-center">
-                      Tiada syarat kemahiran khusus ditetapkan (terbuka kepada semua).
-                    </div>
-                  ) : (
-                    newRequiredSkills.map((req) => {
-                      const skObj = skills.find((s) => s.id === req.skill_id);
-                      return (
-                        <div
-                          key={req.skill_id}
-                          className="p-2.5 rounded-2xl bg-[#F7F4FF] border border-purple-200/80 flex items-center justify-between gap-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="font-extrabold text-[#14122E] truncate">
-                              {skObj?.name || req.skill_id}
-                            </div>
-                            <div className="text-[10px] text-slate-500">
-                              Kategori: {skObj?.category || 'Technical'}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setNewRequiredSkills((prev) =>
-                                  prev.map((item) =>
-                                    item.skill_id === req.skill_id
-                                      ? {...item, mandatory: !item.mandatory}
-                                      : item
-                                  )
-                                )
-                              }
-                              className={`px-2 py-1 rounded-lg text-[10px] font-extrabold cursor-pointer ${
-                                req.mandatory
-                                  ? 'bg-[#5B18E5] text-white'
-                                  : 'bg-white border border-slate-300 text-slate-700'
-                              }`}
-                            >
-                              {req.mandatory ? 'Wajib' : 'Pilihan'}
-                            </button>
-
-                            <select
-                              value={req.importance}
-                              onChange={(e) => {
-                                const imp = Number(e.target.value) as
-                                  | 1
-                                  | 2
-                                  | 3
-                                  | 4
-                                  | 5;
-                                setNewRequiredSkills((prev) =>
-                                  prev.map((item) =>
-                                    item.skill_id === req.skill_id
-                                      ? {...item, importance: imp}
-                                      : item
-                                  )
-                                );
-                              }}
-                              aria-label="Tahap kepentingan kemahiran"
-                              className="rounded-lg border border-slate-300 px-1.5 py-1 text-[10px] font-bold bg-white"
-                            >
-                              {[1, 2, 3, 4, 5].map((lvl) => (
-                                <option key={lvl} value={lvl}>
-                                  {lvl}/5
-                                </option>
-                              ))}
-                            </select>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setNewRequiredSkills((prev) =>
-                                  prev.filter(
-                                    (item) => item.skill_id !== req.skill_id
-                                  )
-                                )
-                              }
-                              className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                      {/* Side-by-Side Organizer Name & WhatsApp Phone */}
+                      <div className="grid grid-cols-2 gap-2.5 pt-1">
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Nama Penganjur / Kelab *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={newOrganizerName}
+                            onChange={(e) =>
+                              setNewOrganizerName(e.target.value)
+                            }
+                            placeholder="Kelab / Pensyarah / Fakulti"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                          />
                         </div>
-                      );
-                    })
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-emerald-700">
+                            No. WhatsApp Penganjur *
+                          </label>
+                          <input
+                            type="tel"
+                            required
+                            value={newOrganizerPhone}
+                            onChange={(e) =>
+                              setNewOrganizerPhone(e.target.value)
+                            }
+                            placeholder="+6012-883 4910"
+                            className="w-full border-b-2 border-emerald-500 focus:border-emerald-700 bg-transparent py-1 text-[11px] font-extrabold text-emerald-950 tabular-nums focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                {/* Add Skill from Catalog */}
-                <div className="pt-2 border-t border-slate-100 space-y-2">
-                  <div className="font-extrabold text-slate-700">
-                    + Tambah Syarat Kemahiran:
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={postSelectSkillId}
-                      onChange={(e) => setPostSelectSkillId(e.target.value)}
-                      className="flex-1 rounded-xl border border-slate-300 px-2.5 py-2 font-semibold bg-white"
-                    >
-                      {skills.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} ({s.category})
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setPostSkillMandatory((v) => !v)}
-                      className={`px-2.5 py-2 rounded-xl font-extrabold text-[10.5px] cursor-pointer ${
-                        postSkillMandatory
-                          ? 'bg-[#5B18E5] text-white'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {postSkillMandatory ? 'Wajib' : 'Pilihan'}
-                    </button>
-                    <select
-                      value={postSkillImportance}
-                      onChange={(e) =>
-                        setPostSkillImportance(Number(e.target.value))
-                      }
-                      className="rounded-xl border border-slate-300 px-2 py-2 font-bold bg-white"
-                    >
-                      {[1, 2, 3, 4, 5].map((lvl) => (
-                        <option key={lvl} value={lvl}>
-                          {lvl}/5
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (
-                        newRequiredSkills.some(
-                          (r) => r.skill_id === postSelectSkillId
-                        )
-                      ) {
-                        notifyToast(
-                          'Kemahiran Sudah Ada',
-                          'Kemahiran ini telah disenaraikan.',
-                          'default'
-                        );
-                        return;
-                      }
-                      setNewRequiredSkills((prev) => [
-                        ...prev,
-                        {
-                          skill_id: postSelectSkillId,
-                          mandatory: postSkillMandatory,
-                          importance: postSkillImportance,
-                        },
-                      ]);
-                    }}
-                    className="w-full py-2 rounded-xl bg-[#F2ECFF] hover:bg-[#E5DAFF] text-[#5B18E5] font-extrabold cursor-pointer"
-                  >
-                    + Masukkan ke Senarai Syarat Kemahiran
-                  </button>
-                </div>
               </div>
 
-              {/* SECTION 04: BIDANG MINAT (25% SKOR) & TAG ATRIBUT PENAPIS HOME (15% SKOR) */}
-              <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.2)] space-y-3 text-[#14122E] text-xs">
-                <div>
-                  <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                    04. Bidang Minat (25%) &amp; Tag Penapis (15%)
-                  </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Pilih bidang minat aktiviti serta tag atribut untuk padanan di halaman Home
-                  </p>
-                </div>
-
-                <div>
-                  <div className="font-extrabold text-slate-700 mb-1.5">
-                    Bidang Minat Aktiviti (Skor Minat Bersama 25%):
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {interests.map((intr) => {
-                      const active = newProjectInterests.includes(intr.id);
-                      return (
-                        <button
-                          key={intr.id}
-                          type="button"
-                          onClick={() =>
-                            setNewProjectInterests((prev) =>
-                              prev.includes(intr.id)
-                                ? prev.filter((id) => id !== intr.id)
-                                : [...prev, intr.id]
-                            )
-                          }
-                          className={`px-2.5 py-1 rounded-xl text-[10.5px] font-bold transition-colors cursor-pointer ${
-                            active
-                              ? 'bg-[#5B18E5] text-white'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                          }`}
-                        >
-                          {active ? `✓ ${intr.name}` : `+ ${intr.name}`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100">
-                  <div className="font-extrabold text-slate-700 mb-1.5">
-                    Tag Penapis Kemahiran Home (Skor Matlamat &amp; Tag 15%):
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      'Programming',
-                      'Planning',
-                      'Database',
-                      'Extrovert',
-                      'Female only',
-                      'UI/UX Design',
-                      'Python',
-                      'Data Analysis',
-                    ].map((attr) => {
-                      const active = newAttributeTags.includes(attr);
-                      return (
-                        <button
-                          key={attr}
-                          type="button"
-                          onClick={() =>
-                            setNewAttributeTags((prev) =>
-                              prev.includes(attr)
-                                ? prev.filter((a) => a !== attr)
-                                : [...prev, attr]
-                            )
-                          }
-                          className={`px-2.5 py-1 rounded-xl text-[10.5px] font-bold transition-colors cursor-pointer ${
-                            active
-                              ? 'bg-[#141132] text-white'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                          }`}
-                        >
-                          {active ? `✓ ${attr}` : `+ ${attr}`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+              {/* FLUSH BOTTOM STICKY PUBLISH DOCK (NO SELF-MATCH SCORE) */}
+              <div className="shrink-0 px-3.5 py-2.5 bg-white/95 backdrop-blur-md border-t border-purple-200/80 flex items-center justify-end">
+                <button
+                  type="submit"
+                  className="w-full h-10 px-5 rounded-full bg-gradient-to-r from-[#5B18E5] to-[#4610B8] hover:from-[#4E12C7] hover:to-[#3A0C9E] text-white font-extrabold text-[12px] shadow-[0_4px_14px_rgba(91,24,229,0.28)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>Terbitkan Aktiviti ke Feed UMS</span>
+                  <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                </button>
               </div>
-
-              {/* SECTION 05: JADUAL PERJUMPAAN MINGGUAN (20% SKOR) & WHATSAPP PENGANJUR */}
-              <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_12px_28px_rgba(16,4,42,0.2)] space-y-3 text-[#14122E] text-xs">
-                <div>
-                  <h2 className="text-[14px] font-extrabold font-display text-[#14122E]">
-                    05. Jadual Perjumpaan (20%) &amp; WhatsApp Penganjur
-                  </h2>
-                  <p className="text-[11px] text-slate-500">
-                    Slot waktu perjumpaan mingguan serta maklumat kad WhatsApp Direct di halaman info
-                  </p>
-                </div>
-
-                {/* Meeting Slots List */}
-                <div className="space-y-1.5">
-                  {newMeetingSlots.map((slot, idx) => (
-                    <div
-                      key={`${slot.weekday}-${slot.start_time}-${idx}`}
-                      className="p-2.5 rounded-2xl bg-[#F7F4FF] flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-2 font-extrabold text-[#14122E]">
-                        <Calendar className="w-3.5 h-3.5 text-[#5B18E5]" />
-                        <span>{WEEKDAY_SHORT[slot.weekday]}</span>
-                        <span className="text-slate-600 tabular-nums">
-                          · {slot.start_time} – {slot.end_time}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNewMeetingSlots((prev) =>
-                            prev.filter((_, i) => i !== idx)
-                          )
-                        }
-                        className="text-rose-600 font-bold text-[10.5px] hover:underline cursor-pointer"
-                      >
-                        Padam
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Add Meeting Slot Controls */}
-                <div className="flex items-center gap-1.5">
-                  <select
-                    value={postSlotDay}
-                    onChange={(e) => setPostSlotDay(Number(e.target.value))}
-                    className="rounded-xl border border-slate-300 px-2 py-2 font-bold bg-white"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7].map((d) => (
-                      <option key={d} value={d}>
-                        {WEEKDAY_SHORT[d]}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="time"
-                    value={postSlotStart}
-                    onChange={(e) => setPostSlotStart(e.target.value)}
-                    className="flex-1 rounded-xl border border-slate-300 px-2 py-1.5"
-                  />
-                  <span>–</span>
-                  <input
-                    type="time"
-                    value={postSlotEnd}
-                    onChange={(e) => setPostSlotEnd(e.target.value)}
-                    className="flex-1 rounded-xl border border-slate-300 px-2 py-1.5"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (postSlotStart >= postSlotEnd) {
-                        notifyToast(
-                          'Masa Tidak Sah',
-                          'Masa mula mestilah lebih awal daripada masa tamat.',
-                          'error'
-                        );
-                        return;
-                      }
-                      setNewMeetingSlots((prev) => [
-                        ...prev,
-                        {
-                          weekday: postSlotDay,
-                          start_time: postSlotStart,
-                          end_time: postSlotEnd,
-                        },
-                      ]);
-                    }}
-                    className="px-3 py-2 rounded-xl bg-[#F2ECFF] text-[#5B18E5] font-extrabold cursor-pointer shrink-0"
-                  >
-                    + Slot
-                  </button>
-                </div>
-
-                {/* Organizer Name & WhatsApp Number */}
-                <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
-                  <div>
-                    <label className="block font-extrabold mb-1">
-                      Nama Penganjur / Kelab / Ketua Projek *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={newOrganizerName}
-                      onChange={(e) => setNewOrganizerName(e.target.value)}
-                      placeholder="cth. Kelab Robotik & AI FKI UMS"
-                      className="w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-extrabold mb-1 text-emerald-700">
-                      No. Telefon WhatsApp Penganjur (Untuk Kad WhatsApp Direct) *
-                    </label>
-                    <input
-                      type="tel"
-                      required
-                      value={newOrganizerPhone}
-                      onChange={(e) => setNewOrganizerPhone(e.target.value)}
-                      placeholder="cth. +6012-883 4910"
-                      className="w-full rounded-xl border-2 border-emerald-400 bg-emerald-50/40 px-3 py-2 font-extrabold text-emerald-950"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* SUBMIT BUTTON */}
-              <button
-                type="submit"
-                className="w-full py-3.5 rounded-[22px] bg-gradient-to-r from-[#5B18E5] via-[#7C3AED] to-[#4F46E5] text-white font-extrabold text-sm shadow-[0_12px_28px_rgba(91,24,229,0.45)] active:scale-[0.99] transition-all cursor-pointer"
-              >
-                Terbitkan Aktiviti UMS &amp; Lihat Halaman Info →
-              </button>
             </form>
-          </div>
+          </motion.div>
         ) : isSearchPageOpen ? (
           /* ---------------------------------------------------------
              DEDICATED FULL-SCREEN SEARCH, MULTI-FILTER, CATEGORY & BOOKMARKS PAGE
-             (No Main Header & No Bottom Navigation — Back button at top-left + Smart Search bar at top)
              --------------------------------------------------------- */
-          <div className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <motion.div
+            key="page-search-hub"
+            initial={{opacity: 0, x: 40, scale: 0.985}}
+            animate={{opacity: 1, x: 0, scale: 1}}
+            exit={{opacity: 0, x: 30, scale: 0.985}}
+            transition={{type: 'spring', stiffness: 390, damping: 34}}
+            className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden"
+          >
             {/* Top Bar: Back Button at Top-Left + Search Input Bar + Quick Post Button */}
             <div className="px-4 pt-4 pb-2.5 flex items-center gap-2 shrink-0">
               <button
@@ -4122,70 +5804,97 @@ export function MainMobileAppInterface() {
                   </button>
                 </div>
 
-                <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1 snap-x snap-mandatory">
-                  {enrichedSearchCatalog.map((item) => (
-                    <div
-                      key={`carousel-${item.id}`}
-                      onClick={() => openCardInfoModal(item.id)}
-                      className="snap-start shrink-0 w-[236px] rounded-[22px] bg-white/95 border border-white shadow-[0_10px_24px_rgba(24,6,64,0.16)] overflow-hidden cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-transform"
-                    >
-                      <div className="relative h-[86px] w-full overflow-hidden">
-                        <ActivityCardBanner
-                          cardId={item.id}
-                          bannerUrl={item.bannerUrl}
-                          bannerPreset={item.bannerPreset}
-                          bannerPositionY={item.bannerPositionY}
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-[#12072B]/85 via-[#12072B]/25 to-transparent" />
-                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[#6215E5]/90 backdrop-blur-xs text-white text-[9.5px] font-extrabold flex items-center gap-1 shadow-xs">
-                          <Sparkles className="w-2.5 h-2.5" />
-                          <span>{item.matchScore}% Match</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleSaveProject(item.id);
-                          }}
-                          aria-label="Save activity"
-                          className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/35 backdrop-blur-xs text-white flex items-center justify-center cursor-pointer"
-                        >
-                          <Bookmark
-                            className={`w-3.5 h-3.5 ${
-                              item.isCardSaved
-                                ? 'fill-[#FACC15] text-[#FACC15]'
-                                : 'text-white'
-                            }`}
-                          />
-                        </button>
-                        <div className="absolute bottom-1.5 left-2.5 right-2.5 flex items-center justify-between text-white">
-                          <span className="text-[11.5px] font-extrabold truncate drop-shadow">
-                            {item.title}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-2.5 space-y-1">
-                        <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-600 truncate">
-                          <Calendar className="w-3 h-3 text-[#5B18E5] shrink-0" />
-                          <span className="truncate">{item.dateText}</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-600 truncate">
-                          <MapPin className="w-3 h-3 text-[#5B18E5] shrink-0" />
-                          <span className="truncate">{item.locationText}</span>
-                        </div>
-                        <div className="pt-1 flex items-center justify-between border-t border-slate-100">
-                          <span className="text-[9.5px] font-bold text-emerald-700 truncate">
-                            WA: {item.organizerPhone}
-                          </span>
-                          <span className="text-[9.5px] font-extrabold text-[#5B18E5]">
-                            Info &amp; WA →
-                          </span>
-                        </div>
-                      </div>
+                {enrichedSearchCatalog.length === 0 ? (
+                  <div className="rounded-[22px] bg-white/90 border border-white p-4 text-center space-y-2 shadow-xs">
+                    <p className="text-xs font-bold text-[#141132]">
+                      Tiada aktiviti kampus diterbitkan buat masa ini
+                    </p>
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={openPostActivityPage}
+                        className="px-3 py-1.5 rounded-xl bg-[#5B18E5] text-white text-[11px] font-extrabold cursor-pointer"
+                      >
+                        + Post Aktiviti
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          seedStarterActivities();
+                          setCardIndex(0);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-[#EFE9FF] text-[#5B18E5] text-[11px] font-extrabold cursor-pointer"
+                      >
+                        Muat 3 Contoh UMS
+                      </button>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1 snap-x snap-mandatory">
+                    {enrichedSearchCatalog.map((item) => (
+                      <div
+                        key={`carousel-${item.id}`}
+                        onClick={() => openCardInfoModal(item.id)}
+                        className="snap-start shrink-0 w-[236px] rounded-[22px] bg-white/95 border border-white shadow-[0_10px_24px_rgba(24,6,64,0.16)] overflow-hidden cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-transform"
+                      >
+                        <div className="relative h-[86px] w-full overflow-hidden">
+                          <ActivityCardBanner
+                            cardId={item.id}
+                            bannerUrl={item.bannerUrl}
+                            bannerPreset={item.bannerPreset}
+                            bannerPositionY={item.bannerPositionY}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-[#12072B]/85 via-[#12072B]/25 to-transparent" />
+                          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[#6215E5]/90 backdrop-blur-xs text-white text-[9.5px] font-extrabold flex items-center gap-1 shadow-xs">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            <span>{item.matchScore}% Match</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSaveProject(item.id);
+                            }}
+                            aria-label="Save activity"
+                            className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/35 backdrop-blur-xs text-white flex items-center justify-center cursor-pointer"
+                          >
+                            <Bookmark
+                              className={`w-3.5 h-3.5 ${
+                                item.isCardSaved
+                                  ? 'fill-[#FACC15] text-[#FACC15]'
+                                  : 'text-white'
+                              }`}
+                            />
+                          </button>
+                          <div className="absolute bottom-1.5 left-2.5 right-2.5 flex items-center justify-between text-white">
+                            <span className="text-[11.5px] font-extrabold truncate drop-shadow">
+                              {item.title}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 space-y-1">
+                          <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-600 truncate">
+                            <Calendar className="w-3 h-3 text-[#5B18E5] shrink-0" />
+                            <span className="truncate">{item.dateText}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-600 truncate">
+                            <MapPin className="w-3 h-3 text-[#5B18E5] shrink-0" />
+                            <span className="truncate">{item.locationText}</span>
+                          </div>
+                          <div className="pt-1 flex items-center justify-between border-t border-slate-100">
+                            <span className="text-[9.5px] font-bold text-emerald-700 truncate">
+                              WA: {item.organizerPhone}
+                            </span>
+                            <span className="text-[9.5px] font-extrabold text-[#5B18E5]">
+                              Info &amp; WA →
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* SECTION 2: MULTI-LAYER CATEGORY, FACULTY, SKILL FILTER & SORT HUB */}
@@ -4227,13 +5936,13 @@ export function MainMobileAppInterface() {
                   })}
                 </div>
 
-                {/* Row 2: Faculty / Campus Filter + Sort By Selector */}
+                {/* Row 2: All UMS Faculties Filter + Sort By Selector */}
                 <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-purple-100">
                   <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
                     <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0 mr-0.5">
                       Fakulti:
                     </span>
-                    {['All', 'FKI', 'FKJ', 'FSSA', 'Kampus'].map((fac) => {
+                    {UMS_FACULTY_CODES.map((fac) => {
                       const active = searchFacultyFilter === fac;
                       return (
                         <button
@@ -4269,34 +5978,49 @@ export function MainMobileAppInterface() {
                   </select>
                 </div>
 
-                {/* Row 3: Multi-Select Skill & Tag Filter Chips */}
+                {/* Row 3: Official Skill & Workstyle Filter Chips */}
                 <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1.5 border-t border-purple-100">
                   <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0 pr-0.5">
                     Kemahiran:
                   </span>
-                  {[
-                    'Tech',
-                    'Programming',
-                    'AI & IoT',
-                    'UI/UX',
-                    'CyberSec',
-                    'Marine',
-                    'Entrepreneurship',
-                    'Sustainability',
-                  ].map((skillChip) => {
-                    const active = searchSkillFilters.includes(skillChip);
+                  {OFFICIAL_FILTER_TAGS.map((tagObj) => {
+                    const active = searchSkillFilters.includes(tagObj.label);
                     return (
                       <button
-                        key={skillChip}
+                        key={tagObj.id}
                         type="button"
-                        onClick={() => toggleSearchSkillChip(skillChip)}
+                        onClick={() => toggleSearchSkillChip(tagObj.label)}
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
                           active
                             ? 'bg-[#5B18E5] text-white'
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                       >
-                        {active ? `✓ ${skillChip}` : `#${skillChip}`}
+                        {active ? `✓ ${tagObj.label}` : tagObj.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Row 4: Official Student Interests (Minat) Filter Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1.5 border-t border-purple-100">
+                  <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0 pr-0.5">
+                    Minat:
+                  </span>
+                  {interests.map((intrObj) => {
+                    const active = searchInterestFilters.includes(intrObj.id);
+                    return (
+                      <button
+                        key={intrObj.id}
+                        type="button"
+                        onClick={() => toggleSearchInterestChip(intrObj.id)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-[#141132] text-white'
+                            : 'bg-[#F5F1FF] text-[#4C14B8] hover:bg-[#E7DDFC]'
+                        }`}
+                      >
+                        {active ? `✓ ${intrObj.name}` : intrObj.name}
                       </button>
                     );
                   })}
@@ -4321,7 +6045,8 @@ export function MainMobileAppInterface() {
                     {(searchQuery ||
                       searchCategory !== 'All' ||
                       searchFacultyFilter !== 'All' ||
-                      searchSkillFilters.length > 0) && (
+                      searchSkillFilters.length > 0 ||
+                      searchInterestFilters.length > 0) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -4329,6 +6054,7 @@ export function MainMobileAppInterface() {
                           setSearchCategory('All');
                           setSearchFacultyFilter('All');
                           setSearchSkillFilters([]);
+                          setSearchInterestFilters([]);
                         }}
                         className="text-[10.5px] font-extrabold text-[#FDE047] underline cursor-pointer"
                       >
@@ -4358,8 +6084,8 @@ export function MainMobileAppInterface() {
                       Tiada aktiviti ditemui
                     </div>
                     <p className="text-xs text-slate-500">
-                      Cuba kata kunci atau penapis kategori/kemahiran lain untuk
-                      melihat aktiviti kampus UMS.
+                      Cuba kata kunci atau penapis fakulti, kemahiran, atau
+                      minat lain untuk melihat aktiviti kampus UMS.
                     </p>
                     <button
                       type="button"
@@ -4368,6 +6094,7 @@ export function MainMobileAppInterface() {
                         setSearchCategory('All');
                         setSearchFacultyFilter('All');
                         setSearchSkillFilters([]);
+                        setSearchInterestFilters([]);
                       }}
                       className="px-4 py-1.5 rounded-full bg-[#5B18E5] text-white text-xs font-extrabold cursor-pointer"
                     >
@@ -4458,14 +6185,19 @@ export function MainMobileAppInterface() {
                 )}
               </div>
             </div>
-          </div>
+          </motion.div>
         ) : activeSidePage ? (
           /* ---------------------------------------------------------
              DEDICATED FULL-SCREEN SIDE NAVIGATION PAGES
-             (No Main Header & No Bottom Navigation — Top-left Back button)
-             Pages: 'my-activities' | 'saved-activities' | 'calendar' | 'notifications' | 'settings'
              --------------------------------------------------------- */
-          <div className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <motion.div
+            key={`page-side-${activeSidePage}`}
+            initial={{opacity: 0, x: 42, scale: 0.985}}
+            animate={{opacity: 1, x: 0, scale: 1}}
+            exit={{opacity: 0, x: 30, scale: 0.985}}
+            transition={{type: 'spring', stiffness: 390, damping: 34}}
+            className="relative z-20 flex-1 flex flex-col min-h-0 overflow-hidden"
+          >
             {/* Shared Top Bar with Top-Left Back Button */}
             <div className="px-4 pt-4 pb-2.5 flex items-center justify-between gap-2.5 shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -4482,27 +6214,57 @@ export function MainMobileAppInterface() {
                 </button>
                 <div className="min-w-0">
                   <h1 className="text-[18px] font-extrabold font-display text-[#141132] tracking-tight truncate">
+                    {activeSidePage === 'profile' && 'Profil Pelajar UMS'}
                     {activeSidePage === 'my-activities' && 'My Activities & SDP'}
                     {activeSidePage === 'saved-activities' &&
                       'Bookmarks & Saved'}
+                    {activeSidePage === 'history' && 'History & Rekod SDP'}
                     {activeSidePage === 'calendar' && 'Calendar & Schedule'}
                     {activeSidePage === 'notifications' && 'Notifications'}
-                    {activeSidePage === 'settings' && 'Settings & Organizer'}
+                    {activeSidePage === 'settings' && 'Settings'}
+                    {activeSidePage === 'admin-panel' && 'Admin Panel'}
                   </h1>
                   <p className="text-[10.5px] font-semibold text-[#5B18E5] truncate">
+                    {activeSidePage === 'profile' &&
+                      `${currentUser?.programme || 'Software Engineering'} · Fakulti Komputeran dan Informatik (FKI)`}
                     {activeSidePage === 'my-activities' &&
                       'Aktiviti dianjurkan & rekod penyertaan kampus UMS'}
                     {activeSidePage === 'saved-activities' &&
                       'Koleksi tanda buku aktiviti UMS, penapis & nota pantas'}
+                    {activeSidePage === 'history' &&
+                      'Sejarah penyertaan aktiviti lalu & mata SDP pelajar UMS'}
                     {activeSidePage === 'calendar' &&
                       'Waktu lapang mingguan & tarikh program UMS'}
                     {activeSidePage === 'notifications' &&
                       'Makluman terkini aktiviti dan kemaskini profil'}
                     {activeSidePage === 'settings' &&
-                      'Tetapan akaun pelajar, mod penganjur & pangkalan data'}
+                      'Tetapan akaun, keselamatan sesi & pangkalan data'}
+                    {activeSidePage === 'admin-panel' &&
+                      'Urus semua aktiviti, akaun pengguna & laporan moderasi'}
                   </p>
                 </div>
               </div>
+
+              {activeSidePage === 'profile' && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={openProfilePhotoModal}
+                    title="Tukar Foto Profil"
+                    className="w-9 h-9 rounded-full bg-white border border-purple-200 text-[#5B18E5] flex items-center justify-center hover:bg-purple-50 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4 stroke-[2.2]" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openEditProfileModal}
+                    className="h-9 px-3 rounded-full bg-[#5B18E5] text-white text-xs font-extrabold shadow-sm flex items-center gap-1.5 hover:bg-[#4C12C2] cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5 stroke-[2.2]" />
+                    <span>Sunting</span>
+                  </button>
+                </div>
+              )}
 
               {activeSidePage === 'my-activities' && (
                 <button
@@ -4529,6 +6291,17 @@ export function MainMobileAppInterface() {
                 </button>
               )}
 
+              {activeSidePage === 'history' && (
+                <button
+                  type="button"
+                  onClick={() => setIsAddHistoryOpen((prev) => !prev)}
+                  className="h-9 px-3 rounded-full bg-[#5B18E5] hover:bg-[#4B12C2] text-white text-[11px] font-extrabold shadow-sm flex items-center gap-1 shrink-0 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>{isAddHistoryOpen ? 'Tutup Borang' : 'Rekod Lalu'}</span>
+                </button>
+              )}
+
               {activeSidePage === 'notifications' && unreadCount > 0 && (
                 <button
                   type="button"
@@ -4542,6 +6315,440 @@ export function MainMobileAppInterface() {
 
             {/* Scrollable Body Content for each Side Navigation Page */}
             <div className="flex-1 overflow-y-auto no-scrollbar px-4 pb-6 space-y-3.5 overscroll-y-contain">
+              {/* =====================================================
+                  SIDE PAGE: DEDICATED STUDENT PROFILE (Accessed via Side Nav Footer)
+                 ===================================================== */}
+              {activeSidePage === 'profile' && (
+                <div className="flex flex-col gap-3">
+                  {/* 1. PROFILE HERO CARD */}
+                  <div className="relative shrink-0 rounded-[24px] p-[1.5px] bg-gradient-to-b from-white/95 to-purple-300/60 shadow-[0_10px_28px_rgba(20,3,52,0.3)]">
+                    <div className="rounded-[23px] bg-[#F8F6FF] overflow-hidden">
+                      {/* Sunset Campus Banner */}
+                      <div className="relative h-[68px] w-full overflow-hidden bg-[#320C6B]">
+                        <div
+                          className="absolute inset-0 bg-no-repeat"
+                          style={{
+                            backgroundImage:
+                              'url("/assets/aistudio/file_0000000099708211a698e06bd291137a_0ad82db4.png")',
+                            backgroundSize: '122% auto',
+                            backgroundPosition: '58% 12%',
+                          }}
+                        />
+                        <svg
+                          className="absolute inset-0 w-full h-full pointer-events-none"
+                          viewBox="0 0 400 72"
+                          preserveAspectRatio="none"
+                        >
+                          <path
+                            d="M0,56 C160,44 290,54 400,70 L400,72 L0,72 Z"
+                            fill="#F8F6FF"
+                          />
+                        </svg>
+
+                        {/* SDP: 500 & Edit Profile Pills on Bottom-Right of Banner */}
+                        <div className="absolute bottom-2 right-2.5 z-20 flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setActiveModal('sdp-info')}
+                            className="h-6 px-2.5 rounded-full bg-white/95 border border-purple-200 text-[#4C1D95] text-[10.5px] font-extrabold shadow-xs inline-flex items-center gap-1 hover:bg-purple-50 transition-colors cursor-pointer"
+                          >
+                            <Award className="w-3 h-3 text-[#6215E5]" />
+                            <span>SDP: {totalSdpPoints}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={openEditProfileModal}
+                            className="h-6 px-2.5 rounded-full bg-white/95 border border-purple-200 text-[#4C1D95] text-[10.5px] font-extrabold shadow-xs inline-flex items-center gap-1 hover:bg-purple-50 transition-colors cursor-pointer"
+                          >
+                            <Pencil className="w-2.5 h-2.5 text-[#6215E5]" />
+                            <span>Edit Profile</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={triggerSignOut}
+                            title="Log Keluar dari Akaun"
+                            className="h-6 px-2.5 rounded-full bg-rose-500 hover:bg-rose-600 border border-rose-300 text-white text-[10px] font-extrabold shadow-xs inline-flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <LogOut className="w-2.5 h-2.5 stroke-[2.5]" />
+                            <span>Log Keluar</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Profile Content Row with Overlapping Circular Avatar on Left */}
+                      <div className="px-3.5 pb-2.5 pt-0.5 flex items-start gap-3 relative">
+                        <div className="-mt-10 relative w-[86px] h-[86px] shrink-0">
+                          <div
+                            onClick={openProfilePhotoModal}
+                            title="Tekan untuk muat naik atau laras foto profil"
+                            className="w-full h-full rounded-full border-[3px] border-white shadow-md overflow-hidden bg-purple-900 cursor-pointer"
+                          >
+                            <FahrinPortraitAvatar
+                              variant={currentUser?.avatar_variant || 0}
+                              avatarUrl={currentUser?.avatar_url}
+                              zoom={currentUser?.avatar_zoom || 1}
+                              offsetX={currentUser?.avatar_offset_x || 0}
+                              offsetY={currentUser?.avatar_offset_y || 0}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={openProfilePhotoModal}
+                            aria-label="Muat Naik atau Tukar Foto Profil"
+                            className="absolute -bottom-0.5 right-0 w-7 h-7 rounded-full bg-[#DDD0FF] border-2 border-white text-[#5B18E5] shadow-xs flex items-center justify-center hover:bg-[#D0BFFF] transition-colors cursor-pointer"
+                          >
+                            <Camera className="w-3.5 h-3.5 stroke-[2.2]" />
+                          </button>
+                        </div>
+
+                        {/* Fahrin Details from Normalized Profile */}
+                        <div className="flex-1 min-w-0 pt-0.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="text-[19px] font-extrabold font-display text-[#12102E] leading-none">
+                              {currentUser?.display_name || 'Fahrin'}
+                            </h2>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateProfileMetadata({
+                                  availability_status:
+                                    availabilityStatus === 'Available'
+                                      ? 'In Team'
+                                      : availabilityStatus === 'In Team'
+                                      ? 'Busy'
+                                      : 'Available',
+                                })
+                              }
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer ${
+                                availabilityStatus === 'Available'
+                                  ? 'bg-[#DCFCE7] text-[#15803D]'
+                                  : availabilityStatus === 'In Team'
+                                  ? 'bg-[#E0E7FF] text-[#3730A3]'
+                                  : 'bg-[#FEE2E2] text-[#B91C1C]'
+                              }`}
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  availabilityStatus === 'Available'
+                                    ? 'bg-[#16A34A]'
+                                    : availabilityStatus === 'In Team'
+                                    ? 'bg-[#4F46E5]'
+                                    : 'bg-[#DC2626]'
+                                }`}
+                              />
+                              <span>{availabilityStatus}</span>
+                              <ChevronDown className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+
+                          <div className="mt-1 text-[11px] flex items-center gap-1.5 text-[#1E1B4B]">
+                            <span className="font-extrabold">
+                              {currentUser?.matric_no || 'A2412345'}
+                            </span>
+                            <span className="text-slate-300">|</span>
+                            <span className="font-medium text-slate-700 truncate">
+                              {currentUser?.programme || 'Software Engineering'}
+                            </span>
+                          </div>
+
+                          <div className="mt-0.5 flex items-center gap-1 text-[10.5px] font-medium text-[#2A264E] truncate">
+                            <Layers className="w-3 h-3 text-[#4C1D95] shrink-0" />
+                            <span className="truncate">
+                              {currentUser?.faculty ||
+                                'Fakulti Komputeran dan Informatik (FKI), UMS'}
+                            </span>
+                          </div>
+
+                          {/* 3 Lavender Contact Pills: Email, Phone, LinkedIn */}
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedContactType('email');
+                                setActiveModal('contact-info');
+                              }}
+                              aria-label="Email Fahrin"
+                              className="h-6 px-3.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Mail className="w-3.5 h-3.5 stroke-[2.2]" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedContactType('phone');
+                                setActiveModal('contact-info');
+                              }}
+                              aria-label="Call Fahrin"
+                              className="h-6 px-3.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Phone className="w-3.5 h-3.5 stroke-[2.2]" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedContactType('linkedin');
+                                setActiveModal('contact-info');
+                              }}
+                              aria-label="Fahrin LinkedIn"
+                              className="h-6 px-3.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] text-[11px] font-extrabold flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              in
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. ABOUT ME CARD */}
+                  <div className="relative rounded-[20px] bg-[#F3EEFF]/95 px-3.5 py-2 shadow-md border border-white/85">
+                    <button
+                      type="button"
+                      onClick={openEditAboutModal}
+                      aria-label="Edit About Me"
+                      className="absolute top-2 right-2.5 w-6 h-6 rounded-lg bg-white text-[#5B18E5] shadow-xs flex items-center justify-center hover:bg-purple-50 transition-colors cursor-pointer"
+                    >
+                      <Pencil className="w-3 h-3 stroke-[2.2]" />
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <div className="w-1 h-4 rounded-full bg-[#5B18E5]" />
+                      <h3 className="text-[13.5px] font-extrabold font-display text-[#12102E]">
+                        About Me
+                      </h3>
+                    </div>
+
+                    <p className="mt-1 pl-3 text-[10.8px] text-[#1D1B38] font-medium leading-snug pr-6 line-clamp-3">
+                      {currentUser?.bio ||
+                        "SE student at UMS who's passionate about building practical and impactful projects, especially in web and app development. Always open to collaborate and learn new things!"}
+                    </p>
+                  </div>
+
+                  {/* 3. 4-COLUMN ACADEMIC & LOCATION STRIP CARD */}
+                  <div className="rounded-[20px] bg-[#F8F6FF] py-2 px-1.5 shadow-md border border-white/90 grid grid-cols-4 divide-x divide-slate-200/90 text-center items-center">
+                    <div className="px-1 flex flex-col items-center">
+                      <Layers className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
+                      <span className="text-[9.5px] text-slate-500 font-medium">
+                        Year of Study
+                      </span>
+                      <span className="text-[11.5px] font-extrabold text-[#12102E] mt-0.5">
+                        Year {currentUser?.year_of_study || 2}
+                      </span>
+                    </div>
+
+                    <div className="px-1 flex flex-col items-center">
+                      <Code2 className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
+                      <span className="text-[9.5px] text-slate-500 font-medium">
+                        Programme
+                      </span>
+                      <span className="text-[10.5px] font-extrabold text-[#12102E] leading-tight mt-0.5">
+                        Software
+                        <br />
+                        Engineering
+                      </span>
+                    </div>
+
+                    <div className="px-1 flex flex-col items-center">
+                      <Building2 className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
+                      <span className="text-[9.5px] text-slate-500 font-medium">
+                        Faculty
+                      </span>
+                      <span className="text-[11.5px] font-extrabold text-[#12102E] mt-0.5">
+                        {currentUser?.faculty_short || 'FKI'}
+                      </span>
+                    </div>
+
+                    <div className="px-1 flex flex-col items-center">
+                      <MapPin className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
+                      <span className="text-[9.5px] text-slate-500 font-medium">
+                        Location
+                      </span>
+                      <span className="text-[10.5px] font-extrabold text-[#12102E] leading-tight mt-0.5">
+                        {currentUser?.location || 'Kota Kinabalu'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 4. BOTTOM SPLIT CARD: SKILLS & INTERESTS (Left) | HISTORY (Right) */}
+                  <div className="flex-1 min-h-[215px] shrink-0 rounded-[22px] bg-[#F8F6FF] p-3 shadow-lg border border-white/90 grid grid-cols-12 gap-2.5 overflow-hidden">
+                    {/* Left Column: Normalized Skills & Interests */}
+                    <div className="col-span-6 pr-1.5 border-r border-slate-200/90 flex flex-col justify-between overflow-y-auto no-scrollbar">
+                      {/* Skills Block (student_skills <-> skills) */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-6 h-6 rounded-lg bg-[#6C2BD9] text-white flex items-center justify-center font-mono text-[10px] font-bold">
+                              &lt;/&gt;
+                            </div>
+                            <span className="text-slate-300 font-light">|</span>
+                            <span className="text-[13px] font-extrabold text-[#12102E]">
+                              Skills
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveModal('add-profile-skill')}
+                            className="px-2 py-0.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] text-[10px] font-extrabold cursor-pointer"
+                          >
+                            + Add
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          {myNormalizedSkills.length === 0 ? (
+                            <span className="text-[10px] text-slate-400 italic">
+                              Tiada kemahiran lagi. Tekan + Add.
+                            </span>
+                          ) : (
+                            myNormalizedSkills.map((sk) => (
+                              <button
+                                key={sk.skill_id}
+                                type="button"
+                                onClick={() =>
+                                  removeStudentSkillById(sk.skill_id)
+                                }
+                                title={`Proficiency: ${sk.proficiency} (Tap to remove)`}
+                                className="px-2 py-0.5 rounded-full bg-[#E6DEFF] hover:bg-[#D9CCFF] text-[#4C1D95] text-[10px] font-bold cursor-pointer"
+                              >
+                                {sk.name}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="my-1.5 border-t border-slate-200/90" />
+
+                      {/* Interests Block (student_interests <-> interests) */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-6 h-6 rounded-lg bg-[#6C2BD9] text-white flex items-center justify-center">
+                              <Gamepad2 className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="text-slate-300 font-light">|</span>
+                            <span className="text-[13px] font-extrabold text-[#12102E]">
+                              Interests
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveModal('add-profile-interest')}
+                            className="px-2 py-0.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] text-[10px] font-extrabold cursor-pointer"
+                          >
+                            + Add
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          {myNormalizedInterests.length === 0 ? (
+                            <span className="text-[10px] text-slate-400 italic">
+                              Tiada minat lagi. Tekan + Add.
+                            </span>
+                          ) : (
+                            myNormalizedInterests.map((intr) => (
+                              <button
+                                key={intr.interest_id}
+                                type="button"
+                                onClick={() =>
+                                  removeStudentInterestById(intr.interest_id)
+                                }
+                                title="Tap to remove interest"
+                                className="px-2 py-0.5 rounded-full bg-[#E6DEFF] hover:bg-[#D9CCFF] text-[#4C1D95] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                {intr.name === 'Learning' && (
+                                  <BookOpen className="w-2.5 h-2.5" />
+                                )}
+                                <span>{intr.name}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Column: History (student_activity_history) */}
+                    <div className="col-span-6 flex flex-col min-h-0 relative pr-2">
+                      <div className="flex items-start gap-1.5 mb-1.5">
+                        <History className="w-4 h-4 text-[#5B18E5] shrink-0 mt-0.5 stroke-[2.3]" />
+                        <div>
+                          <h3 className="text-[13px] font-extrabold text-[#12102E] leading-none">
+                            History
+                          </h3>
+                          <p className="text-[9px] text-slate-500 font-medium mt-0.5">
+                            Past programs and activities
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* History Items List */}
+                      <div className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar pr-0.5">
+                        {myHistoryRecords.length === 0 ? (
+                          <div className="p-2.5 rounded-xl bg-[#EFEAFF]/70 text-[10px] text-slate-500 text-center">
+                            Tiada rekod aktiviti lepas lagi.
+                          </div>
+                        ) : (
+                          myHistoryRecords.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedHistoryItem(item);
+                                setActiveModal('history-detail');
+                              }}
+                              className="w-full text-left rounded-xl bg-[#EFEAFF] hover:bg-[#E4DCFF] px-2 py-1.5 flex items-center justify-between gap-1 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <div className="w-1 h-6 rounded-full bg-[#5B18E5] shrink-0" />
+                                <div className="min-w-0">
+                                  <div className="text-[10.5px] font-extrabold text-[#12102E] truncate">
+                                    {item.title}
+                                  </div>
+                                  <div className="text-[9px] text-slate-600 font-medium flex items-center gap-1 mt-0.5">
+                                    <Calendar className="w-2.5 h-2.5 text-slate-500 shrink-0" />
+                                    <span className="truncate">
+                                      {item.date_display}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              <ChevronRight className="w-3.5 h-3.5 text-[#12102E] shrink-0" />
+                            </button>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Purple Vertical Scrollbar Track Indicator */}
+                      <div className="absolute right-0 top-8 bottom-1 w-1 rounded-full bg-purple-200/70 overflow-hidden pointer-events-none">
+                        <div className="w-full h-1/2 rounded-full bg-[#5B18E5]" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5. ACCOUNT SESSION & LOG OUT BAR ON PROFILE PAGE */}
+                  <div className="shrink-0 rounded-[20px] bg-white/95 px-3.5 py-2.5 shadow-md border border-white/90 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-extrabold text-[#12102E] truncate">
+                        Log Masuk Sebagai: {currentUser?.email || 'fahrin@student.ums.edu.my'}
+                      </div>
+                      <div className="text-[9.5px] text-slate-500">
+                        Sesi disahkan melalui pelayan ProjectLink UMS
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={triggerSignOut}
+                      className="shrink-0 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5 stroke-[2.3]" />
+                      <span>Log Keluar</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* =====================================================
                   SIDE PAGE 1: MY ACTIVITIES (Organized Projects + SDP History)
                  ===================================================== */}
@@ -4569,69 +6776,137 @@ export function MainMobileAppInterface() {
                     </button>
                   </div>
 
-                  {/* Section A: Activities Organized / Posted on ProjectLink UMS */}
+                  {/* Section A1: Activities Authored / Created by Current User (Author Mode) */}
                   <div className="rounded-[24px] bg-white/95 border border-white p-4 shadow-[0_10px_24px_rgba(20,5,58,0.18)] space-y-2.5 text-[#14122E]">
                     <div className="flex items-center justify-between">
                       <div>
                         <h2 className="text-[14px] font-extrabold font-display">
-                          Aktiviti &amp; Projek Kampus Semasa
+                          Aktiviti Ciptaan Anda (Author ·{' '}
+                          {cardsCatalog.filter((c) => c.isOwner).length})
                         </h2>
                         <p className="text-[11px] text-slate-500">
-                          Tekan mana-mana aktiviti untuk lihat info penuh atau WhatsApp penganjur
+                          Hanya aktiviti yang anda muat naik sendiri boleh
+                          disunting maklumat atau ditukar gambar poster
                         </p>
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      {cardsCatalog.map((c) => (
-                        <div
-                          key={c.id}
-                          onClick={() => openCardInfoModal(c.id)}
-                          className="p-2.5 rounded-2xl bg-[#F8F6FF] hover:bg-[#EFE9FF] border border-purple-100 flex items-center justify-between gap-2.5 transition-colors cursor-pointer"
+                    {cardsCatalog.filter((c) => c.isOwner).length === 0 ? (
+                      <div className="p-3.5 rounded-2xl bg-[#F8F6FF] border border-purple-100 text-xs text-slate-600 flex items-center justify-between gap-2">
+                        <span>
+                          Anda belum memuat naik sebarang aktiviti kampus.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={openPostActivityPage}
+                          className="px-3 py-1.5 rounded-xl bg-[#5B18E5] text-white text-[10.5px] font-extrabold shrink-0 cursor-pointer"
                         >
-                          <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 bg-[#240850]">
-                            <ActivityCardBanner
-                              cardId={c.id}
-                              bannerUrl={c.bannerUrl}
-                              bannerPreset={c.bannerPreset}
-                              bannerPositionY={c.bannerPositionY}
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
+                          + Post Aktiviti
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {cardsCatalog
+                          .filter((c) => c.isOwner)
+                          .map((c) => (
+                            <div
+                              key={c.id}
+                              onClick={() => openCardInfoModal(c.id)}
+                              className="p-2.5 rounded-2xl bg-[#F8F6FF] hover:bg-[#EFE9FF] border border-purple-200 flex items-center justify-between gap-2.5 transition-colors cursor-pointer"
+                            >
+                              <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 bg-[#240850]">
+                                <ActivityCardBanner
+                                  cardId={c.id}
+                                  bannerUrl={c.bannerUrl}
+                                  bannerPreset={c.bannerPreset}
+                                  bannerPositionY={c.bannerPositionY}
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <div className="text-xs font-extrabold text-[#14122E] truncate">
+                                    {c.title}
+                                  </div>
+                                  <span className="text-[9px] font-extrabold text-[#5B18E5] shrink-0">
+                                    · Author
+                                  </span>
+                                </div>
+                                <div className="text-[10.5px] text-slate-500 truncate mt-0.5">
+                                  {c.dateText} · {c.locationText}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEditProjectInfoModal(c.id);
+                                  }}
+                                  className="px-2 py-1.5 rounded-xl bg-[#5B18E5] text-white text-[10px] font-extrabold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                  <span>Sunting</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEditActivityBannerModal(c.id);
+                                  }}
+                                  className="px-2 py-1.5 rounded-xl bg-white border border-purple-200 text-[#5B18E5] text-[10px] font-extrabold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Camera className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Section A2: Campus Activities by Other Organizers (Viewer Read-Only Mode) */}
+                  <div className="rounded-[24px] bg-white/95 border border-white p-4 shadow-[0_10px_24px_rgba(20,5,58,0.18)] space-y-2.5 text-[#14122E]">
+                    <div>
+                      <h2 className="text-[14px] font-extrabold font-display">
+                        Aktiviti Kampus UMS Lain (Mod Pelajar · Baca Sahaja)
+                      </h2>
+                      <p className="text-[11px] text-slate-500">
+                        Tekan mana-mana aktiviti untuk lihat info penuh atau
+                        hubungi penganjur di WhatsApp
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      {cardsCatalog
+                        .filter((c) => !c.isOwner)
+                        .map((c) => (
+                          <div
+                            key={c.id}
+                            onClick={() => openCardInfoModal(c.id)}
+                            className="p-2.5 rounded-2xl bg-[#F8F6FF] hover:bg-[#EFE9FF] border border-purple-100 flex items-center justify-between gap-2.5 transition-colors cursor-pointer"
+                          >
+                            <div className="relative w-14 h-14 rounded-xl overflow-hidden shrink-0 bg-[#240850]">
+                              <ActivityCardBanner
+                                cardId={c.id}
+                                bannerUrl={c.bannerUrl}
+                                bannerPreset={c.bannerPreset}
+                                bannerPositionY={c.bannerPositionY}
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
                               <div className="text-xs font-extrabold text-[#14122E] truncate">
                                 {c.title}
                               </div>
-                              {c.isOwner && (
-                                <span className="text-[9px] font-extrabold text-[#5B18E5] shrink-0">
-                                  · Milik Anda
-                                </span>
-                              )}
+                              <div className="text-[10.5px] text-slate-500 truncate mt-0.5">
+                                {c.dateText} · {c.locationText}
+                              </div>
+                              <div className="text-[10px] font-bold text-emerald-700 mt-0.5 truncate">
+                                Penganjur: {c.organizerName}
+                              </div>
                             </div>
-                            <div className="text-[10.5px] text-slate-500 truncate mt-0.5">
-                              {c.dateText} · {c.locationText}
-                            </div>
-                            <div className="text-[10px] font-bold text-emerald-700 mt-0.5 truncate">
-                              Penganjur: {c.organizerName}
-                            </div>
-                          </div>
-                          {c.isOwner ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditActivityBannerModal(c.id);
-                              }}
-                              className="px-2.5 py-1.5 rounded-xl bg-[#5B18E5] text-white text-[10px] font-extrabold shrink-0 flex items-center gap-1 cursor-pointer"
-                            >
-                              <Camera className="w-3 h-3" />
-                              <span>Tukar Gambar</span>
-                            </button>
-                          ) : (
                             <ChevronRight className="w-4 h-4 text-[#5B18E5] shrink-0" />
-                          )}
-                        </div>
-                      ))}
+                          </div>
+                        ))}
                     </div>
                   </div>
 
@@ -4742,32 +7017,75 @@ export function MainMobileAppInterface() {
 
               {/* =====================================================
                   SIDE PAGE 2: SAVED ACTIVITIES / BOOKMARKS COLLECTION HUB
+                  (CONTINUOUS EDITORIAL LEDGER — NO ROUNDED SQUARE BOXES)
                  ===================================================== */}
               {activeSidePage === 'saved-activities' && (
-                <>
-                  {/* Bookmarks Search & Category Filter Bar */}
-                  <div className="rounded-[22px] bg-white/95 border border-white p-3 shadow-[0_8px_20px_rgba(20,5,58,0.16)] space-y-2.5 text-[#14122E]">
-                    <div className="relative flex items-center">
-                      <Search className="w-3.5 h-3.5 text-[#5B18E5] absolute left-3 pointer-events-none" />
+                <div className="-mx-4 px-5 pt-4 pb-10 rounded-t-[28px] bg-[#FAF9FF] border-t border-white/90 text-[#14122E] min-h-full shadow-[0_-10px_30px_rgba(16,4,42,0.14)] space-y-5">
+                  {/* Open Editorial Telemetry & Search Header */}
+                  <div className="space-y-4 border-b border-purple-200/75 pb-4">
+                    {/* Inline Telemetry Strip (Zero Nested Boxes) */}
+                    <div className="grid grid-cols-3 divide-x divide-purple-200/80 border-y border-purple-200/70 py-2.5 text-center">
+                      <div className="px-2">
+                        <div className="text-base font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                          {searchCategoryCounts.Saved}
+                        </div>
+                        <div className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 mt-1">
+                          Disimpan
+                        </div>
+                      </div>
+                      <div className="px-2">
+                        <div className="text-base font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                          {filteredSavedCatalog.length > 0
+                            ? `${Math.round(
+                                filteredSavedCatalog.reduce(
+                                  (acc, cur) => acc + cur.matchScore,
+                                  0
+                                ) / filteredSavedCatalog.length
+                              )}%`
+                            : '0%'}
+                        </div>
+                        <div className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 mt-1">
+                          Purata Skor
+                        </div>
+                      </div>
+                      <div className="px-2">
+                        <div className="text-base font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                          {filteredSavedCatalog.reduce(
+                            (acc, cur) =>
+                              acc + (cur.projectObj.min_weekly_hours || 6),
+                            0
+                          )}
+                          j/mgg
+                        </div>
+                        <div className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 mt-1">
+                          Jumlah Masa
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Minimalist Bottom-Line Search */}
+                    <div className="relative flex items-center border-b-2 border-purple-200 focus-within:border-[#5B18E5] transition-colors">
+                      <Search className="w-4 h-4 text-[#5B18E5] shrink-0 mr-2.5" />
                       <input
                         type="text"
                         value={savedSearchQuery}
                         onChange={(e) => setSavedSearchQuery(e.target.value)}
-                        placeholder="Cari dalam koleksi Bookmarks anda..."
-                        className="w-full h-9 pl-8 pr-7 rounded-xl bg-[#F6F2FF] border border-purple-200 text-xs font-semibold text-[#141132] placeholder:text-slate-400 focus:outline-none focus:border-[#5B18E5]"
+                        placeholder="Cari tajuk, fakulti, atau kemahiran dalam simpanan..."
+                        className="w-full py-2 bg-transparent text-xs font-semibold text-[#141132] placeholder:text-slate-400 focus:outline-none"
                       />
                       {savedSearchQuery && (
                         <button
                           type="button"
                           onClick={() => setSavedSearchQuery('')}
-                          className="absolute right-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                    {/* Sliding Underline Category Filter */}
+                    <div className="flex items-center gap-4 overflow-x-auto no-scrollbar border-b border-purple-100">
                       {[
                         'All',
                         'High Match',
@@ -4782,67 +7100,39 @@ export function MainMobileAppInterface() {
                             key={cat}
                             type="button"
                             onClick={() => setSavedCategoryFilter(cat)}
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold whitespace-nowrap cursor-pointer ${
+                            className={`relative pb-2 text-[11px] font-extrabold whitespace-nowrap transition-colors cursor-pointer ${
                               active
-                                ? 'bg-[#5B18E5] text-white'
-                                : 'bg-[#F2ECFF] text-[#4A1D96]'
+                                ? 'text-[#5B18E5]'
+                                : 'text-slate-400 hover:text-slate-700'
                             }`}
                           >
                             {cat === 'All' ? 'Semua Simpanan' : cat}
+                            {active && (
+                              <motion.div
+                                layoutId="side-saved-cat-underline"
+                                transition={{
+                                  type: 'spring',
+                                  stiffness: 500,
+                                  damping: 34,
+                                }}
+                                className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-[#5B18E5]"
+                              />
+                            )}
                           </button>
                         );
                       })}
                     </div>
-
-                    {/* Quick Summary Metrics for Bookmarks */}
-                    <div className="pt-1.5 border-t border-slate-100 grid grid-cols-3 gap-2 text-center text-[10px]">
-                      <div className="rounded-xl bg-[#F8F5FF] py-1.5 px-2">
-                        <div className="font-extrabold text-[#5B18E5] text-xs tabular-nums">
-                          {searchCategoryCounts.Saved}
-                        </div>
-                        <div className="text-slate-500 font-semibold">
-                          Disimpan
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-[#F8F5FF] py-1.5 px-2">
-                        <div className="font-extrabold text-[#5B18E5] text-xs tabular-nums">
-                          {filteredSavedCatalog.length > 0
-                            ? `${Math.round(
-                                filteredSavedCatalog.reduce(
-                                  (acc, cur) => acc + cur.matchScore,
-                                  0
-                                ) / filteredSavedCatalog.length
-                              )}%`
-                            : '0%'}
-                        </div>
-                        <div className="text-slate-500 font-semibold">
-                          Purata Skor
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-[#F8F5FF] py-1.5 px-2">
-                        <div className="font-extrabold text-[#5B18E5] text-xs tabular-nums">
-                          {filteredSavedCatalog.reduce(
-                            (acc, cur) =>
-                              acc + (cur.projectObj.min_weekly_hours || 6),
-                            0
-                          )}
-                          j/mgg
-                        </div>
-                        <div className="text-slate-500 font-semibold">
-                          Jumlah Masa
-                        </div>
-                      </div>
-                    </div>
                   </div>
 
+                  {/* Open Editorial Ledger List */}
                   {filteredSavedCatalog.length === 0 ? (
-                    <div className="rounded-[24px] bg-white/95 p-6 text-center space-y-2.5 shadow-lg">
-                      <Bookmark className="w-8 h-8 text-[#5B18E5] mx-auto stroke-[2.2]" />
+                    <div className="py-12 text-center space-y-3">
+                      <Bookmark className="w-8 h-8 text-[#5B18E5] mx-auto stroke-[1.8]" />
                       <div className="text-sm font-extrabold text-[#141132]">
                         Tiada Aktiviti dalam Koleksi Ini
                       </div>
-                      <p className="text-xs text-slate-500 leading-relaxed">
-                        Swipe ke kiri pada kad di halaman Home atau tekan ikon
+                      <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
+                        Swipe ke kanan pada kad di halaman Home atau tekan ikon
                         Bookmark pada halaman Search untuk menyimpan aktiviti.
                       </p>
                       <button
@@ -4853,14 +7143,14 @@ export function MainMobileAppInterface() {
                           setActiveSidePage(null);
                           setActiveTab('home');
                         }}
-                        className="px-4 py-2 rounded-full bg-[#5B18E5] text-white text-xs font-extrabold cursor-pointer"
+                        className="px-5 py-2.5 rounded-full bg-[#5B18E5] text-white text-xs font-extrabold cursor-pointer"
                       >
                         Teroka Aktiviti di Home
                       </button>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {filteredSavedCatalog.map((item) => {
+                    <div className="divide-y divide-purple-200/75">
+                      {filteredSavedCatalog.map((item, idx) => {
                         const rawDigits = (
                           item.organizerPhone || '+60128834910'
                         ).replace(/[^0-9]/g, '');
@@ -4881,112 +7171,486 @@ export function MainMobileAppInterface() {
                           <div
                             key={item.id}
                             onClick={() => openCardInfoModal(item.id)}
-                            className="rounded-[24px] bg-white/96 border border-white p-3.5 shadow-[0_12px_28px_rgba(14,3,38,0.22)] space-y-2.5 cursor-pointer hover:bg-white transition-all"
+                            className="py-5 first:pt-1 group cursor-pointer space-y-3"
                           >
-                            <div className="flex gap-3 items-start">
-                              <div className="relative w-[84px] h-[74px] rounded-2xl overflow-hidden shrink-0">
+                            {/* Top Editorial Index & Category Kicker */}
+                            <div className="flex items-center justify-between gap-2 text-[10.5px]">
+                              <div className="flex items-center gap-2 font-extrabold uppercase tracking-wider">
+                                <span className="text-[#5B18E5] font-display tabular-nums">
+                                  {String(idx + 1).padStart(2, '0')}
+                                </span>
+                                <span className="text-slate-300">/</span>
+                                <span className="text-[#4E14B8]">
+                                  {item.projectObj.project_type}
+                                </span>
+                                <span className="text-slate-300">·</span>
+                                <span className="text-slate-500">
+                                  {item.facultyLabel1}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-3">
+                                <span className="font-extrabold text-[#5B18E5] tabular-nums">
+                                  {item.matchScore}% Match
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleSaveProject(item.id);
+                                  }}
+                                  className="text-[10.5px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+                                >
+                                  Buang
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Main Split Row: Editorial Image + Typography */}
+                            <div className="flex gap-3.5 items-start">
+                              <div className="relative w-24 h-24 rounded-lg overflow-hidden shrink-0 bg-[#1D0642]">
                                 <ActivityCardBanner
                                   cardId={item.id}
                                   bannerUrl={item.bannerUrl}
                                   bannerPreset={item.bannerPreset}
                                   bannerPositionY={item.bannerPositionY}
                                 />
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent" />
-                                <span className="absolute bottom-1.5 left-1.5 text-[9.5px] font-extrabold text-white drop-shadow tabular-nums">
-                                  {item.matchScore}% Match
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
+                                <span className="absolute bottom-1.5 left-1.5 text-[9px] font-extrabold text-amber-300 uppercase tracking-wider">
+                                  +50 SDP
                                 </span>
                               </div>
 
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between gap-1">
-                                  <h3 className="text-sm font-extrabold font-display text-[#14122E] truncate">
-                                    {item.title}
-                                  </h3>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleSaveProject(item.id);
-                                    }}
-                                    className="text-[10.5px] font-bold text-rose-600 hover:underline shrink-0 cursor-pointer"
-                                  >
-                                    Buang
-                                  </button>
-                                </div>
-                                <div className="text-[11px] text-slate-600 font-medium mt-0.5 truncate">
-                                  {item.dateText} · {item.locationText}
-                                </div>
-                                <div className="text-[10px] font-semibold text-slate-500 mt-0.5 truncate">
-                                  Kategori: {item.projectObj.project_type} ·{' '}
-                                  {item.projectObj.slots_needed || 4} ahli (
-                                  {item.projectObj.min_weekly_hours || 6}j/mgg)
+                              <div className="flex-1 min-w-0 space-y-1.5">
+                                <h3 className="text-[15px] font-extrabold font-display text-[#14122E] group-hover:text-[#5B18E5] transition-colors leading-snug">
+                                  {item.title}
+                                </h3>
+                                <div className="pt-1 border-t border-purple-100/80 space-y-0.5 text-[11px] text-slate-600 font-medium">
+                                  <div className="truncate">
+                                    {item.dateText} · {item.locationText}
+                                  </div>
+                                  <div className="text-[10.5px] text-slate-500 truncate">
+                                    {item.projectObj.slots_needed || 4} ahli (
+                                    {item.projectObj.min_weekly_hours || 6}j/mgg) ·{' '}
+                                    {item.organizerName}
+                                  </div>
                                 </div>
                               </div>
                             </div>
 
-                            {/* Quick Bookmark Label / Personal Note Selector */}
+                            {/* Inline Dot-Style Personal Note Switcher */}
                             <div
                               onClick={(e) => e.stopPropagation()}
-                              className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-slate-100 text-[10px]"
+                              className="flex items-center justify-between gap-2 pt-1 text-[10.5px]"
                             >
-                              <span className="font-bold text-slate-500 shrink-0">
-                                Label Simpanan:
-                              </span>
-                              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                              <div className="flex items-center gap-3 overflow-x-auto no-scrollbar">
                                 {[
                                   'Prioriti Utama',
                                   'Ajak Kawan FKI',
                                   'Tanya Penganjur',
-                                ].map((lbl) => (
-                                  <button
-                                    key={lbl}
-                                    type="button"
-                                    onClick={() =>
-                                      setBookmarkNotes((prev) => ({
-                                        ...prev,
-                                        [item.id]: lbl,
-                                      }))
-                                    }
-                                    className={`px-2 py-0.5 rounded-md font-bold whitespace-nowrap cursor-pointer ${
-                                      currentNote === lbl
-                                        ? 'bg-[#141132] text-white'
-                                        : 'bg-slate-100 text-slate-600'
-                                    }`}
-                                  >
-                                    {lbl}
-                                  </button>
-                                ))}
+                                ].map((lbl) => {
+                                  const isSelected = currentNote === lbl;
+                                  return (
+                                    <button
+                                      key={lbl}
+                                      type="button"
+                                      onClick={() =>
+                                        setBookmarkNotes((prev) => ({
+                                          ...prev,
+                                          [item.id]: lbl,
+                                        }))
+                                      }
+                                      className={`font-extrabold whitespace-nowrap cursor-pointer transition-colors ${
+                                        isSelected
+                                          ? 'text-[#5B18E5] underline underline-offset-4'
+                                          : 'text-slate-400 hover:text-slate-600'
+                                      }`}
+                                    >
+                                      {isSelected ? `● ${lbl}` : lbl}
+                                    </button>
+                                  );
+                                })}
                               </div>
-                            </div>
 
-                            <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openCardInfoModal(item.id);
-                                }}
-                                className="flex-1 py-2 rounded-xl bg-[#F2ECFF] hover:bg-[#E5DAFF] text-[#5B18E5] text-xs font-extrabold cursor-pointer"
-                              >
-                                Buka Info Penuh
-                              </button>
-                              <a
-                                href={itemWaUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex-1 py-2 rounded-xl bg-[#25D366] hover:bg-[#1EBE5D] text-white text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                              >
-                                <MessageCircle className="w-3.5 h-3.5 fill-current" />
-                                <span>WhatsApp Direct</span>
-                              </a>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openCardInfoModal(item.id);
+                                  }}
+                                  className="text-[11px] font-extrabold text-[#5B18E5] hover:underline cursor-pointer"
+                                >
+                                  Info →
+                                </button>
+                                <a
+                                  href={itemWaUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="px-3 py-1 rounded-full bg-[#16A34A] hover:bg-[#15803D] text-white text-[10.5px] font-extrabold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <MessageCircle className="w-3 h-3 fill-current" />
+                                  <span>WhatsApp</span>
+                                </a>
+                              </div>
                             </div>
                           </div>
                         );
                       })}
                     </div>
                   )}
-                </>
+                </div>
+              )}
+
+              {/* =====================================================
+                  SIDE PAGE: HISTORY & REKOD PENYERTAAN SDP PELAJAR
+                  (CONTINUOUS EDITORIAL SHEET — NO ROUNDED SQUARE BOXES)
+                 ===================================================== */}
+              {activeSidePage === 'history' && (
+                <div className="-mx-4 px-4 pt-3.5 pb-12 rounded-t-[28px] bg-[#FAF9FF] border-t border-white/95 text-[#14122E] min-h-full shadow-[0_-10px_30px_rgba(16,4,42,0.14)] divide-y divide-purple-200/75">
+                  {/* 1. EDITORIAL HEADER & INLINE SDP TELEMETRY STRIP */}
+                  <div className="pb-3.5 space-y-3">
+                    <div className="flex items-end justify-between gap-2">
+                      <div>
+                        <div className="text-[9.5px] font-extrabold uppercase tracking-[0.14em] text-[#5B18E5] flex items-center gap-1">
+                          <History className="w-3 h-3 stroke-[2.5]" />
+                          <span>Transkrip Ko-Kurikulum &amp; SDP UMS</span>
+                        </div>
+                        <h2 className="text-[18px] font-extrabold font-display tracking-tight text-[#14122E] leading-tight mt-0.5">
+                          Sejarah Penyertaan Lalu
+                        </h2>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal('sdp-info')}
+                        className="text-[10.5px] font-extrabold text-[#5B18E5] hover:underline cursor-pointer shrink-0"
+                      >
+                        Info SDP →
+                      </button>
+                    </div>
+
+                    {/* 3-Column Hairline Telemetry Strip (Zero Box) */}
+                    <div className="grid grid-cols-3 divide-x divide-purple-200/80 border-y border-purple-200/75 py-2.5 text-center">
+                      <div className="px-1.5">
+                        <div className="text-[17px] font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                          {totalSdpPoints}
+                        </div>
+                        <div className="text-[8.5px] font-extrabold uppercase tracking-wider text-slate-400 mt-1">
+                          Jumlah SDP
+                        </div>
+                      </div>
+                      <div className="px-1.5">
+                        <div className="text-[17px] font-extrabold font-display text-[#14122E] tabular-nums leading-none">
+                          {myHistoryRecords.length}
+                        </div>
+                        <div className="text-[8.5px] font-extrabold uppercase tracking-wider text-slate-400 mt-1">
+                          Rekod Aktiviti
+                        </div>
+                      </div>
+                      <div className="px-1.5">
+                        <div className="text-[17px] font-extrabold font-display text-amber-600 tabular-nums leading-none">
+                          {myHistoryRecords.length > 0
+                            ? Math.round(
+                                totalSdpPoints / myHistoryRecords.length
+                              )
+                            : 0}
+                        </div>
+                        <div className="text-[8.5px] font-extrabold uppercase tracking-wider text-slate-400 mt-1">
+                          Purata / Program
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Slim SDP Graduation Milestone Progress Strip */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="font-bold text-slate-500">
+                          Sasaran Kepemimpinan &amp; Graduasi UMS (200 SDP)
+                        </span>
+                        <span className="font-extrabold text-[#5B18E5] tabular-nums">
+                          {Math.min(
+                            100,
+                            Math.round((totalSdpPoints / 200) * 100)
+                          )}
+                          % ({totalSdpPoints}/200 SDP)
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full rounded-full bg-purple-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-[#5B18E5] via-[#7C3AED] to-[#F59E0B] transition-all duration-500"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round((totalSdpPoints / 200) * 100)
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. COLLAPSIBLE INLINE ADD PAST RECORD FORM */}
+                  <div className="py-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddHistoryOpen((prev) => !prev)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-[#F3EEFF] via-[#F7F4FF] to-white border border-purple-200/90 flex items-center justify-between gap-2 text-left hover:border-[#5B18E5]/50 active:scale-[0.99] transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="inline-flex items-center justify-center min-w-[24px] h-5 px-1.5 rounded-md bg-gradient-to-br from-[#5B18E5] to-[#4310B8] text-white text-[10px] font-extrabold shrink-0">
+                          +
+                        </span>
+                        <span className="text-[11px] font-extrabold font-display uppercase tracking-wide text-[#14122E] truncate">
+                          Log Rekod Penyertaan Aktiviti Lalu
+                        </span>
+                      </div>
+                      <span className="w-6 h-6 rounded-md bg-white border border-purple-200/80 flex items-center justify-center text-[#5B18E5] shrink-0">
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                            isAddHistoryOpen ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </span>
+                    </button>
+
+                    {isAddHistoryOpen && (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!newHistTitle.trim()) return;
+                          addActivityHistory({
+                            title: newHistTitle.trim(),
+                            date_display: newHistDate.trim() || 'Nov 2026',
+                            role: newHistRole.trim() || 'Peserta',
+                            sdp_earned: Number(newHistSdp) || 30,
+                            summary:
+                              newHistSummary.trim() ||
+                              'Menyertai aktiviti pembangunan pelajar Universiti Malaysia Sabah (UMS).',
+                          });
+                          setNewHistTitle('');
+                          setNewHistSummary('');
+                          setIsAddHistoryOpen(false);
+                        }}
+                        className="pt-3 space-y-2.5 text-[11px]"
+                      >
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Nama Program / Aktiviti Lalu *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={newHistTitle}
+                            onChange={(e) => setNewHistTitle(e.target.value)}
+                            placeholder="cth. Borneo AI & Smart Campus Hackathon 2025"
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11.5px] font-bold text-[#14122E] focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                              Tarikh / Sesi
+                            </label>
+                            <input
+                              type="text"
+                              value={newHistDate}
+                              onChange={(e) => setNewHistDate(e.target.value)}
+                              placeholder="Okt 2026"
+                              className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                              Peranan Anda
+                            </label>
+                            <input
+                              type="text"
+                              value={newHistRole}
+                              onChange={(e) => setNewHistRole(e.target.value)}
+                              placeholder="AJK / Peserta"
+                              className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-semibold focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                              Mata SDP
+                            </label>
+                            <input
+                              type="number"
+                              min={5}
+                              max={200}
+                              value={newHistSdp}
+                              onChange={(e) =>
+                                setNewHistSdp(Number(e.target.value) || 30)
+                              }
+                              className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-extrabold text-[#5B18E5] tabular-nums focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            Ringkasan Sumbangan / Pencapaian
+                          </label>
+                          <input
+                            type="text"
+                            value={newHistSummary}
+                            onChange={(e) => setNewHistSummary(e.target.value)}
+                            placeholder="cth. Membangunkan prototaip sistem atau mengurus logistik peserta..."
+                            className="w-full border-b border-purple-200 focus:border-[#5B18E5] bg-transparent py-1 text-[11px] font-medium focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsAddHistoryOpen(false)}
+                            className="px-3 py-1 rounded-full text-[10.5px] font-extrabold text-slate-500 hover:text-slate-700 cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                          <button
+                            type="submit"
+                            className="px-4 py-1.5 rounded-full bg-[#5B18E5] hover:bg-[#4A11C4] text-white text-[10.5px] font-extrabold shadow-xs active:scale-95 transition-all cursor-pointer"
+                          >
+                            Simpan Rekod SDP →
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+
+                  {/* 3. BOTTOM-BORDER SEARCH & UNDERLINE ROLE FILTER TABS */}
+                  <div className="py-3 space-y-2.5">
+                    <div className="relative flex items-center border-b border-purple-200 focus-within:border-[#5B18E5] pb-1.5 transition-colors">
+                      <Search className="w-3.5 h-3.5 text-[#5B18E5] mr-2 shrink-0 stroke-[2.3]" />
+                      <input
+                        type="text"
+                        value={historySearchQuery}
+                        onChange={(e) => setHistorySearchQuery(e.target.value)}
+                        placeholder="Cari nama aktiviti lalu, peranan, atau tarikh..."
+                        className="w-full bg-transparent text-[11.5px] font-semibold text-[#14122E] placeholder:text-slate-400 focus:outline-none"
+                      />
+                      {historySearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setHistorySearchQuery('')}
+                          className="text-[10px] font-extrabold text-slate-400 hover:text-slate-600 ml-1 cursor-pointer"
+                        >
+                          Padam
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-4 overflow-x-auto no-scrollbar border-b border-purple-100">
+                      {(
+                        [
+                          {id: 'all', label: `Semua (${myHistoryRecords.length})`},
+                          {id: 'leadership', label: 'AJK & Penganjur'},
+                          {id: 'participant', label: 'Peserta & Ahli'},
+                          {id: 'high-sdp', label: 'SDP Tinggi (≥40)'},
+                        ] as const
+                      ).map((tab) => {
+                        const active = historyRoleFilter === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setHistoryRoleFilter(tab.id)}
+                            className={`pb-2 text-[11px] font-extrabold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+                              active
+                                ? 'border-[#5B18E5] text-[#5B18E5]'
+                                : 'border-transparent text-slate-400 hover:text-slate-700'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 4. CONTINUOUS CHRONOLOGICAL HISTORY STREAM (DIVIDE-Y) */}
+                  {filteredHistoryRecords.length === 0 ? (
+                    <div className="py-10 text-center space-y-2">
+                      <div className="text-[13px] font-extrabold text-[#14122E]">
+                        Tiada rekod sejarah ditemui
+                      </div>
+                      <p className="text-[11px] text-slate-500 max-w-[240px] mx-auto">
+                        Cuba tukar penapis carian atau tambah rekod penyertaan
+                        aktiviti lalu anda di atas.
+                      </p>
+                      {(historySearchQuery || historyRoleFilter !== 'all') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHistorySearchQuery('');
+                            setHistoryRoleFilter('all');
+                          }}
+                          className="text-[11px] font-extrabold text-[#5B18E5] underline cursor-pointer"
+                        >
+                          Reset Penapis History
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-purple-200/75">
+                      {filteredHistoryRecords.map((act, idx) => (
+                        <div
+                          key={act.id}
+                          onClick={() => {
+                            setSelectedHistoryItem(act);
+                            setActiveModal('history-detail');
+                          }}
+                          className="py-3.5 space-y-1.5 group cursor-pointer active:bg-purple-50/50 transition-colors"
+                        >
+                          {/* Top Metadata Index & SDP Score Line */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="inline-flex items-center justify-center min-w-[22px] h-4.5 px-1 rounded bg-[#EFE9FF] text-[#5B18E5] font-mono text-[9.5px] font-extrabold tabular-nums shrink-0">
+                                {String(idx + 1).padStart(2, '0')}
+                              </span>
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#5B18E5] truncate">
+                                {act.role}
+                              </span>
+                              <span className="text-slate-300">·</span>
+                              <span className="text-[10px] font-semibold text-slate-500 shrink-0">
+                                {act.date_display}
+                              </span>
+                            </div>
+
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100/90 border border-amber-300/80 text-amber-900 text-[10px] font-extrabold tabular-nums shrink-0">
+                              +{act.sdp_earned} SDP
+                            </span>
+                          </div>
+
+                          {/* Activity Title & Summary */}
+                          <div className="pl-7 space-y-1">
+                            <h3 className="text-[13.5px] font-extrabold font-display text-[#14122E] group-hover:text-[#5B18E5] transition-colors leading-snug">
+                              {act.title}
+                            </h3>
+                            {act.summary && (
+                              <p className="text-[11px] text-slate-600 leading-relaxed">
+                                {act.summary}
+                              </p>
+                            )}
+                            <div className="pt-0.5 flex items-center justify-between text-[10px]">
+                              <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                <Check className="w-3 h-3 stroke-[2.5]" />
+                                <span>Disahkan dalam Transkrip SDP UMS</span>
+                              </span>
+                              <span className="font-extrabold text-[#5B18E5] group-hover:underline">
+                                Lihat Butiran →
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* =====================================================
@@ -5184,73 +7848,100 @@ export function MainMobileAppInterface() {
               )}
 
               {/* =====================================================
-                  SIDE PAGE 5: SETTINGS & ORGANIZER HUB
+                  SIDE PAGE 5: CLEAN ACCOUNT & APP SETTINGS (2-Role System: Admin & User)
                  ===================================================== */}
               {activeSidePage === 'settings' && (
                 <>
-                  {/* Card 1: Account Persona & Role Mode */}
-                  <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_10px_24px_rgba(20,5,58,0.18)] space-y-3.5 text-[#14122E] text-xs">
-                    <div>
-                      <h2 className="text-[14px] font-extrabold font-display">
-                        Akaun Pelajar &amp; Mod Peranan UMS
-                      </h2>
-                      <p className="text-[11px] text-slate-500">
-                        Urus profil pelajar atau tukar kepada mod Penganjur (Organizer)
-                      </p>
+                  {/* Card 0: Backend Session & Account Security (/api/auth) */}
+                  <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_10px_24px_rgba(20,5,58,0.18)] space-y-3 text-[#14122E] text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-[14px] font-extrabold font-display">
+                          Sesi Log Masuk &amp; Keselamatan Akaun
+                        </h2>
+                        <p className="text-[11px] text-slate-500">
+                          Status pengesahan pelayan <code>/api/auth</code>
+                        </p>
+                      </div>
+                      <span className="text-emerald-700 text-[10.5px] font-extrabold">
+                        Sesi Aktif · {isAdmin ? 'Admin' : 'User'}
+                      </span>
                     </div>
 
-                    {/* STUDENT / ORGANIZER Mode Switch */}
-                    <div>
-                      <label className="block font-bold mb-1 text-slate-700">
-                        Mod Penggunaan Aplikasi:
-                      </label>
-                      <div className="rounded-xl border border-slate-200 p-1 grid grid-cols-2 bg-slate-50">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateProfileMetadata({role_mode: 'STUDENT'})
-                          }
-                          className={`py-2 rounded-lg text-[11px] font-extrabold uppercase cursor-pointer ${
-                            sidebarRole === 'STUDENT'
-                              ? 'bg-[#5B18E5] text-white shadow-xs'
-                              : 'text-slate-600'
-                          }`}
-                        >
-                          STUDENT MODE
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateProfileMetadata({role_mode: 'ORGANIZER'})
-                          }
-                          className={`py-2 rounded-lg text-[11px] font-extrabold uppercase cursor-pointer ${
-                            sidebarRole === 'ORGANIZER'
-                              ? 'bg-[#5B18E5] text-white shadow-xs'
-                              : 'text-slate-600'
-                          }`}
-                        >
-                          ORGANIZER MODE
-                        </button>
+                    <div className="rounded-2xl bg-[#F6F3FF] border border-purple-100 p-3 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[12.5px] font-extrabold text-[#141132]">
+                          {currentUser?.display_name} ({currentUser?.matric_no || 'UMS'})
+                        </div>
+                        {isAdmin && (
+                          <span className="text-[10px] font-extrabold text-[#5B18E5]">
+                            Role: Admin
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-[#5B18E5] font-semibold">
+                        {currentUser?.email || 'fahrin@student.ums.edu.my'}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {currentUser?.faculty || 'Universiti Malaysia Sabah'} · Peranan:{' '}
+                        <span className="font-bold text-[#141132]">
+                          {isAdmin ? 'admin (fahrinmuneer3@gmail.com)' : 'user'}
+                        </span>
                       </div>
                     </div>
 
-                    {/* Switch Active Student / Organizer Persona */}
-                    <div>
-                      <label className="block font-bold mb-1 text-slate-700">
-                        Tukar Akaun Pelajar UMS (Ujian):
-                      </label>
-                      <select
-                        value={currentUser?.id || ''}
-                        onChange={(e) => switchPersona(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 font-bold bg-white"
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveSidebarItem('Admin Panel');
+                          setActiveSidePage('admin-panel');
+                        }}
+                        className="w-full py-2.5 px-3.5 rounded-xl bg-[#141132] hover:bg-[#1E1848] text-white font-extrabold text-[11.5px] flex items-center justify-between cursor-pointer"
                       >
-                        {profiles.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.display_name} ({p.matric_no || p.id}) —{' '}
-                            {p.faculty_short || 'UMS'}
-                          </option>
-                        ))}
-                      </select>
+                        <span className="flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                          <span>Buka Admin Panel (Urus Sistem)</span>
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResetEmail(
+                            currentUser?.email || 'fahrin@student.ums.edu.my'
+                          );
+                          setActiveSidePage(null);
+                          switchAuthStage('forgot-password');
+                        }}
+                        className="py-2.5 px-3 rounded-xl bg-[#F2ECFF] hover:bg-[#E5DAFF] text-[#5B18E5] font-extrabold text-[11.5px] cursor-pointer"
+                      >
+                        Tukar Kata Laluan
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={triggerSignOut}
+                        className="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[11.5px] flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Log Keluar</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Card 1: Profile & Availability Settings */}
+                  <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_10px_24px_rgba(20,5,58,0.18)] space-y-3.5 text-[#14122E] text-xs">
+                    <div>
+                      <h2 className="text-[14px] font-extrabold font-display">
+                        Tetapan Profil &amp; Ketersediaan
+                      </h2>
+                      <p className="text-[11px] text-slate-500">
+                        Kemas kini status ketersediaan atau uji pertukaran akaun User / Admin
+                      </p>
                     </div>
 
                     {/* Availability Status Selector */}
@@ -5280,6 +7971,33 @@ export function MainMobileAppInterface() {
                       </div>
                     </div>
 
+                    {/* Switch Active Account for Testing User vs Admin */}
+                    <div>
+                      <label className="block font-bold mb-1 text-slate-700">
+                        Tukar Akaun Pantas (Ujian Role User vs Admin):
+                      </label>
+                      <select
+                        value={currentUser?.id || ''}
+                        onChange={(e) => switchPersona(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 font-bold bg-white"
+                      >
+                        {profiles.map((p) => {
+                          const pRole =
+                            p.role === 'admin' ||
+                            p.is_admin ||
+                            p.email?.toLowerCase() === 'fahrinmuneer3@gmail.com'
+                              ? 'ADMIN'
+                              : 'USER';
+                          return (
+                            <option key={p.id} value={p.id}>
+                              [{pRole}] {p.display_name} —{' '}
+                              {p.email || p.matric_no || 'UMS'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
                     <button
                       type="button"
                       onClick={openEditProfileModal}
@@ -5289,20 +8007,20 @@ export function MainMobileAppInterface() {
                     </button>
                   </div>
 
-                  {/* Card 2: Organizer Quick Post & Database Actions */}
+                  {/* Card 2: Quick Post Activity & Database Actions */}
                   <div className="rounded-[24px] bg-white/96 border border-white p-4 shadow-[0_10px_24px_rgba(20,5,58,0.18)] space-y-2.5 text-[#14122E] text-xs">
                     <div className="font-extrabold text-[14px] font-display">
-                      Tindakan Penganjur &amp; Pangkalan Data
+                      Aktiviti &amp; Pangkalan Data
                     </div>
                     <p className="text-[11px] text-slate-500">
-                      Siarkan aktiviti baharu berserta nombor WhatsApp anda atau tetapkan semula data demo.
+                      Siarkan aktiviti baharu atau tetapkan semula data pangkalan data kepada asal.
                     </p>
                     <button
                       type="button"
                       onClick={openPostActivityPage}
                       className="w-full py-2.5 rounded-xl bg-[#5B18E5] text-white font-extrabold cursor-pointer"
                     >
-                      + Post Aktiviti / Projek Baharu (Halaman Penuh)
+                      + Post Aktiviti / Projek Baharu
                     </button>
                     <button
                       type="button"
@@ -5326,329 +8044,911 @@ export function MainMobileAppInterface() {
                   </div>
                 </>
               )}
-            </div>
-          </div>
-        ) : activeTab === 'home' ? (
-          /* ---------------------------------------------------------
-             PAGE 1: HOME SCREEN (Scrollable with comfortable spacing)
-             --------------------------------------------------------- */
-          <div className="relative z-10 flex-1 min-h-0 px-4 pt-1 pb-5 flex flex-col gap-4 overflow-y-auto overflow-x-hidden no-scrollbar overscroll-y-contain">
-            {/* A. MULTI-CARD LOOPING STACK (Front card disappears on swipe & card behind moves to front) */}
-            <div className="relative pt-3 select-none shrink-0">
-              {[2, 1, 0].map((stackOffset) => {
-                const stepNumber = cardIndex + stackOffset;
-                const cardItem =
-                  cardsCatalog[stepNumber % cardsCatalog.length] ||
-                  cardsCatalog[0];
-                const isFront = stackOffset === 0;
-                const cardIsSaved = Boolean(
-                  currentUser &&
-                    savedProjects.some(
-                      (s) =>
-                        s.student_id === currentUser.id &&
-                        s.project_id === cardItem.id
-                    )
-                );
 
-                // Smooth promotion transforms for cards behind the front card
-                const scaleVal = isFront
-                  ? 1
-                  : stackOffset === 1
-                  ? Number((0.935 + 0.065 * dragProgress).toFixed(3))
-                  : Number((0.875 + 0.06 * dragProgress).toFixed(3));
-
-                const translateYVal = isFront
-                  ? 0
-                  : stackOffset === 1
-                  ? Number(((1 - dragProgress) * -9).toFixed(1))
-                  : Number((-9 - (1 - dragProgress) * 8).toFixed(1));
-
-                const opacityVal = isFront
-                  ? flyOffDir
-                    ? 0
-                    : 1
-                  : stackOffset === 1
-                  ? Number((0.72 + 0.28 * dragProgress).toFixed(2))
-                  : Number((0.38 + 0.34 * dragProgress).toFixed(2));
-
-                const cardTransform = isFront
-                  ? topCardTransform
-                  : `translate3d(0, ${translateYVal}px, 0) scale(${scaleVal})`;
-
-                return (
-                  <div
-                    key={`deck-step-${stepNumber}`}
-                    aria-hidden={!isFront}
-                    onTouchStart={
-                      isFront
-                        ? (e) =>
-                            handleDragStart(
-                              e.touches[0].clientX,
-                              e.touches[0].clientY
-                            )
-                        : undefined
-                    }
-                    onTouchMove={
-                      isFront
-                        ? (e) =>
-                            handleDragMove(
-                              e.touches[0].clientX,
-                              e.touches[0].clientY
-                            )
-                        : undefined
-                    }
-                    onTouchEnd={isFront ? handleDragEnd : undefined}
-                    onMouseDown={
-                      isFront
-                        ? (e) => handleDragStart(e.clientX, e.clientY)
-                        : undefined
-                    }
-                    onMouseMove={
-                      isFront
-                        ? (e) => handleDragMove(e.clientX, e.clientY)
-                        : undefined
-                    }
-                    onMouseUp={isFront ? handleDragEnd : undefined}
-                    onMouseLeave={
-                      isFront
-                        ? () => {
-                            if (isDraggingCard) handleDragEnd();
-                          }
-                        : undefined
-                    }
-                    style={{
-                      transform: cardTransform,
-                      opacity: opacityVal,
-                    }}
-                    className={`${
-                      isFront
-                        ? 'relative z-20 cursor-grab active:cursor-grabbing touch-pan-y'
-                        : stackOffset === 1
-                        ? 'absolute inset-x-0 top-3 z-10 pointer-events-none'
-                        : 'absolute inset-x-0 top-3 z-0 pointer-events-none'
-                    } rounded-[26px] p-[2px] bg-gradient-to-b from-white/95 via-purple-200/85 to-purple-400/50 shadow-[0_12px_30px_rgba(24,4,64,0.32)] ${
-                      isFront && isDraggingCard
-                        ? 'transition-none'
-                        : 'transition-all duration-230 ease-out'
-                    }`}
-                  >
-                    {/* Dynamic Swipe Stamps on Front Card while dragging */}
-                    {isFront && (dragOffset.x < -25 || flyOffDir === 'left') && (
-                      <div className="absolute top-12 right-4 z-30 pointer-events-none px-3 py-1 rounded-xl bg-[#5B18E5]/95 border-2 border-white text-white font-extrabold text-xs tracking-wider uppercase shadow-xl transform rotate-12">
-                        ← SAVE &amp; INFO
-                      </div>
-                    )}
-                    {isFront && (dragOffset.x > 25 || flyOffDir === 'right') && (
-                      <div className="absolute top-12 left-4 z-30 pointer-events-none px-3 py-1 rounded-xl bg-amber-500/95 border-2 border-white text-white font-extrabold text-xs tracking-wider uppercase shadow-xl transform -rotate-12">
-                        SKIP →
-                      </div>
-                    )}
-
-                    <div className="rounded-[24px] bg-[#F7F5FF] overflow-hidden">
-                      {/* Banner Image with Trending, Bookmark, Owner Edit Poster, 3 Dots & Purple Diagonal Stripes Wave */}
-                      <div className="relative h-[152px] w-full overflow-hidden bg-[#2D0C5E]">
-                        <ActivityCardBanner
-                          cardId={cardItem.id}
-                          bannerUrl={cardItem.bannerUrl}
-                          bannerPreset={cardItem.bannerPreset}
-                          bannerPositionY={cardItem.bannerPositionY}
-                        />
-
-                        {/* Trending Pill (Top-Left) */}
-                        <div className="absolute top-3 left-3.5 z-10 flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FFE4DC]/95 backdrop-blur-xs text-[#DF3415] text-[12px] font-bold shadow-sm">
-                          <Flame className="w-3.5 h-3.5 fill-[#F04423] text-[#F04423]" />
-                          <span>Trending</span>
+              {/* =====================================================
+                  SIDE PAGE 6: DEDICATED ADMIN PANEL (Role: 'admin' only)
+                  Manage all activities, registered users, and moderation reports
+                 ===================================================== */}
+              {activeSidePage === 'admin-panel' && (
+                <>
+                  {/* Top Admin Summary & KPI Strip */}
+                  <div className="rounded-[24px] bg-[#141132] text-white p-4 shadow-[0_14px_32px_rgba(12,3,36,0.35)] space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-10 h-10 rounded-2xl bg-[#5B18E5] flex items-center justify-center shrink-0">
+                          <ShieldCheck className="w-5 h-5 text-emerald-300" />
                         </div>
-
-                        {/* Owner-Only Quick Change Banner Button on Front Card */}
-                        {cardItem.isOwner && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditActivityBannerModal(cardItem.id);
-                            }}
-                            aria-label="Tukar Gambar Poster Aktiviti"
-                            className="absolute top-3 right-13 z-10 h-8 px-2.5 rounded-[11px] bg-[#1A063E]/90 hover:bg-[#2B0B63] text-white border border-purple-300/60 text-[10px] font-extrabold flex items-center gap-1 shadow-sm cursor-pointer"
-                          >
-                            <Camera className="w-3.5 h-3.5 text-amber-300" />
-                            <span>Tukar Gambar</span>
-                          </button>
-                        )}
-
-                        {/* Bookmark Button (Top-Right) */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleSaveProject(cardItem.id);
-                          }}
-                          aria-label="Save activity"
-                          className={`absolute top-3 right-3.5 z-10 w-8 h-8 rounded-[11px] flex items-center justify-center shadow-sm transition-colors cursor-pointer ${
-                            cardIsSaved
-                              ? 'bg-[#6215E5] text-white'
-                              : 'bg-white/95 text-[#14122E]'
-                          }`}
-                        >
-                          <Bookmark
-                            className={`w-4 h-4 stroke-[2.1] ${
-                              cardIsSaved ? 'fill-current' : ''
-                            }`}
-                          />
-                        </button>
-
-                        {/* Pagination Dots on the Banner (Bottom Center) */}
-                        <div className="absolute bottom-5 inset-x-0 z-20 flex items-center justify-center gap-1.5">
-                          {cardsCatalog.slice(0, 4).map((c, dotIdx) => {
-                            const isActiveDot =
-                              stepNumber % cardsCatalog.length === dotIdx;
-                            return (
-                              <button
-                                key={c.id}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  triggerSwipeRight();
-                                }}
-                                aria-label={`Activity card ${dotIdx + 1}`}
-                                className={`w-2 h-2 rounded-full transition-all cursor-pointer ${
-                                  isActiveDot
-                                    ? 'bg-white scale-125 shadow-[0_0_6px_rgba(255,255,255,0.9)]'
-                                    : 'bg-white/60 hover:bg-white'
-                                }`}
-                              />
-                            );
-                          })}
-                        </div>
-
-                        {/* Curved Purple Wave + 4 Diagonal Stripes on Right + White Wave Bottom */}
-                        <svg
-                          className="absolute -bottom-[1px] inset-x-0 w-full h-9 pointer-events-none"
-                          viewBox="0 0 400 44"
-                          preserveAspectRatio="none"
-                        >
-                          <path
-                            d="M210,44 C265,12 335,2 400,6 L400,44 Z"
-                            fill="#4B0FB8"
-                          />
-                          <g fill="#9F67FF" opacity="0.65">
-                            <polygon points="300,26 308,26 318,12 310,12" />
-                            <polygon points="320,26 328,26 338,12 330,12" />
-                            <polygon points="340,26 348,26 358,12 350,12" />
-                            <polygon points="360,26 368,26 378,12 370,12" />
-                          </g>
-                          <path
-                            d="M0,24 C115,-2 260,34 400,40 L400,44 L0,44 Z"
-                            fill="#F7F5FF"
-                          />
-                        </svg>
-                      </div>
-
-                      {/* Card Text & Metadata Body */}
-                      <div className="px-4 pt-1 pb-2.5 text-[#14122E]">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <h1 className="text-[21px] font-extrabold font-display tracking-tight text-[#11102E] leading-tight truncate">
-                              {cardItem.title}
-                            </h1>
-
-                            <div className="mt-1 space-y-0.5 text-[11.5px] font-medium text-[#211E3A]">
-                              <div className="flex items-center gap-2">
-                                <Calendar className="w-3.5 h-3.5 text-[#1E1B38] shrink-0 stroke-[2.1]" />
-                                <span>{cardItem.dateText}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <MapPin className="w-3.5 h-3.5 text-[#1E1B38] shrink-0 stroke-[2.1]" />
-                                <span>{cardItem.locationText}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Users className="w-3.5 h-3.5 text-[#1E1B38] shrink-0 stroke-[2.1]" />
-                                <span>{cardItem.audienceText}</span>
-                              </div>
-                            </div>
+                        <div className="min-w-0">
+                          <div className="text-[13.5px] font-extrabold font-display truncate">
+                            Kawalan Pentadbir Sistem
                           </div>
-
-                          {/* Right Box: [</> Program Fakulti] */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openCardInfoModal(cardItem.id);
-                            }}
-                            className="mt-3.5 shrink-0 w-[82px] py-2 px-2 rounded-[18px] bg-[#EAE2FF] border border-[#D8C7FF] flex flex-col items-center justify-center text-[#5A17E0] hover:bg-[#E0D4FF] transition-colors cursor-pointer"
-                          >
-                            <div className="border-[1.8px] border-[#5A17E0] rounded-[4px] px-1.5 py-0.5 text-[9px] font-mono font-bold leading-none mb-1">
-                              &lt;/&gt;
-                            </div>
-                            <span className="text-[11px] font-bold leading-tight">
-                              {cardItem.facultyLabel1}
-                            </span>
-                            <span className="text-[11px] font-bold leading-tight">
-                              {cardItem.facultyLabel2}
-                            </span>
-                          </button>
+                          <div className="text-[10.5px] text-purple-200/85 truncate">
+                            {currentUser?.email || 'fahrinmuneer3@gmail.com'} · Role: Admin
+                          </div>
                         </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={openPostActivityPage}
+                        className="px-3 py-1.5 rounded-xl bg-white text-[#141132] text-[11px] font-extrabold shrink-0 cursor-pointer"
+                      >
+                        + Aktiviti
+                      </button>
+                    </div>
 
-                        {/* Subtle Divider */}
-                        <div className="my-2 border-t border-slate-200/90" />
-
-                        {/* Purple Vertical Bar + Description */}
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-1.5 h-8 rounded-full bg-[#5E17EB] shrink-0" />
-                          <p className="text-[11.5px] text-[#1A1833] font-medium leading-snug line-clamp-2">
-                            {cardItem.description}
-                          </p>
+                    <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                      <div className="rounded-2xl bg-white/10 px-2.5 py-2">
+                        <div className="text-[17px] font-extrabold font-display tabular-nums">
+                          {projects.length}
                         </div>
-
-                        {/* 3 Lavender Tag Pills */}
-                        <div className="mt-2 flex items-center justify-between gap-2">
-                          <span className="flex-1 py-1 px-2.5 rounded-full bg-[#E9E0FF] text-[#5315D0] text-[11px] font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap">
-                            <span className="font-mono font-extrabold text-[10px]">
-                              &lt;/&gt;
-                            </span>
-                            <span>{cardItem.tags[0] || 'Tech'}</span>
-                          </span>
-                          <span className="flex-1 py-1 px-2.5 rounded-full bg-[#E9E0FF] text-[#5315D0] text-[11px] font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap">
-                            <Users className="w-3.5 h-3.5 stroke-[2.2]" />
-                            <span>{cardItem.tags[1] || 'Networking'}</span>
-                          </span>
-                          <span className="flex-1 py-1 px-2.5 rounded-full bg-[#E9E0FF] text-[#5315D0] text-[11px] font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap">
-                            <Trophy className="w-3.5 h-3.5 stroke-[2.2]" />
-                            <span>{cardItem.tags[2] || 'Competition'}</span>
-                          </span>
+                        <div className="text-[10px] text-purple-200/80">
+                          Aktiviti
                         </div>
-
-                        {/* Interactive Swipe Guide Row (Swipe Left = Save & Info | Swipe Right = Skip) */}
-                        <div className="mt-2 pt-1.5 border-t border-purple-200/60 flex items-center justify-between text-[10px] font-semibold italic text-[#3F1994]">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              triggerSwipeLeft();
-                            }}
-                            className="inline-flex items-center gap-1 hover:text-[#6215E5] cursor-pointer"
-                          >
-                            <span className="not-italic font-bold">←</span>
-                            <span>Swipe left to look more</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              triggerSwipeRight();
-                            }}
-                            className="inline-flex items-center gap-1 hover:text-[#6215E5] cursor-pointer"
-                          >
-                            <span>Swipe right to skip</span>
-                            <span className="not-italic font-bold">→</span>
-                          </button>
+                      </div>
+                      <div className="rounded-2xl bg-white/10 px-2.5 py-2">
+                        <div className="text-[17px] font-extrabold font-display tabular-nums">
+                          {profiles.length}
+                        </div>
+                        <div className="text-[10px] text-purple-200/80">
+                          Pengguna
+                        </div>
+                      </div>
+                      <div className="rounded-2xl bg-white/10 px-2.5 py-2">
+                        <div className="text-[17px] font-extrabold font-display text-amber-300 tabular-nums">
+                          {openReportsCount}
+                        </div>
+                        <div className="text-[10px] text-purple-200/80">
+                          Laporan Aktif
                         </div>
                       </div>
                     </div>
+
+                    {/* 3 Segmented Control Tabs: Aktiviti | Pengguna | Laporan */}
+                    <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/10">
+                      {(
+                        [
+                          {id: 'activities', label: `Aktiviti (${projects.length})`},
+                          {id: 'users', label: `Pengguna (${profiles.length})`},
+                          {id: 'reports', label: `Laporan (${reports.length})`},
+                        ] as const
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setAdminTab(tab.id)}
+                          className={`py-2 px-2 rounded-lg text-[11px] font-extrabold transition-colors whitespace-nowrap truncate cursor-pointer ${
+                            adminTab === tab.id
+                              ? 'bg-white text-[#141132] shadow-xs'
+                              : 'text-purple-100/80 hover:text-white'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                );
-              })}
+
+                  {/* Search Filter Bar for Activities & Users */}
+                  {adminTab !== 'reports' && (
+                    <div className="rounded-2xl bg-white/95 border border-white px-3.5 py-2.5 shadow-sm flex items-center gap-2">
+                      <Search className="w-4 h-4 text-[#5B18E5] shrink-0" />
+                      <input
+                        type="text"
+                        value={adminSearchQuery}
+                        onChange={(e) => setAdminSearchQuery(e.target.value)}
+                        placeholder={
+                          adminTab === 'activities'
+                            ? 'Cari tajuk aktiviti, lokasi atau penganjur...'
+                            : 'Cari nama pengguna, e-mel atau No. Matrik...'
+                        }
+                        className="w-full bg-transparent text-xs font-medium text-[#141132] placeholder:text-slate-400 focus:outline-none"
+                      />
+                      {adminSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setAdminSearchQuery('')}
+                          className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 1: MANAGE ALL ACTIVITIES */}
+                  {adminTab === 'activities' && (
+                    <div className="space-y-2.5">
+                      {projects.length === 0 ? (
+                        <div className="rounded-[22px] bg-white/96 border border-white p-5 text-center space-y-3 text-xs text-[#14122E]">
+                          <div className="font-extrabold text-sm text-[#141132]">
+                            Tiada Aktiviti Diterbitkan Lagi
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            Katalog aktiviti kampus kini kosong. Anda boleh
+                            menerbitkan aktiviti baharu atau memuatkan 3 aktiviti
+                            contoh UMS dengan satu klik.
+                          </p>
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={openPostActivityPage}
+                              className="px-3.5 py-2 rounded-xl bg-[#5B18E5] text-white font-extrabold text-[11px] cursor-pointer"
+                            >
+                              + Post Aktiviti
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                seedStarterActivities();
+                                setCardIndex(0);
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-[#EFE9FF] text-[#5B18E5] font-extrabold text-[11px] cursor-pointer"
+                            >
+                              Muat 3 Contoh UMS
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        projects
+                          .filter((proj) => {
+                            const q = adminSearchQuery.trim().toLowerCase();
+                            if (!q) return true;
+                            return (
+                              proj.title.toLowerCase().includes(q) ||
+                              (proj.location || '').toLowerCase().includes(q) ||
+                              (proj.organizer_name || '')
+                                .toLowerCase()
+                                .includes(q)
+                            );
+                          })
+                          .map((proj) => (
+                            <div
+                              key={proj.id}
+                              className="rounded-[22px] bg-white/96 border border-white p-3.5 shadow-[0_8px_22px_rgba(14,3,38,0.16)] space-y-2.5 text-xs text-[#14122E]"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="font-extrabold text-[13.5px] font-display text-[#141132] truncate">
+                                    {proj.title}
+                                  </div>
+                                  <div className="text-[10.5px] text-slate-500 mt-0.5 truncate">
+                                    {proj.project_type} · {proj.location || 'UMS'} ·{' '}
+                                    {proj.organizer_name || 'UMS'}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => adminDeleteProject(proj.id)}
+                                  title="Padam Aktiviti"
+                                  className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 shrink-0 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {/* Status Segmented Control: Open | Closed | Completed */}
+                              <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                                <span className="text-[10.5px] font-bold text-slate-500">
+                                  Status Siaran:
+                                </span>
+                                <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+                                  {(
+                                    ['open', 'closed', 'completed'] as ProjectStatus[]
+                                  ).map((st) => (
+                                    <button
+                                      key={st}
+                                      type="button"
+                                      onClick={() =>
+                                        adminUpdateProjectStatus(proj.id, st)
+                                      }
+                                      className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase transition-colors cursor-pointer ${
+                                        proj.status === st
+                                          ? 'bg-[#5B18E5] text-white shadow-2xs'
+                                          : 'text-slate-600 hover:text-[#141132]'
+                                      }`}
+                                    >
+                                      {st}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 2: MANAGE REGISTERED USERS */}
+                  {adminTab === 'users' && (
+                    <div className="space-y-2.5">
+                      {profiles
+                        .filter((prof) => {
+                          const q = adminSearchQuery.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            prof.display_name.toLowerCase().includes(q) ||
+                            (prof.email || '').toLowerCase().includes(q) ||
+                            (prof.matric_no || '').toLowerCase().includes(q) ||
+                            (prof.faculty_short || '')
+                              .toLowerCase()
+                              .includes(q)
+                          );
+                        })
+                        .map((prof) => {
+                          const profIsAdmin =
+                            prof.role === 'admin' ||
+                            prof.is_admin ||
+                            prof.email?.toLowerCase() ===
+                              'fahrinmuneer3@gmail.com';
+                          return (
+                            <div
+                              key={prof.id}
+                              className="rounded-[22px] bg-white/96 border border-white p-3.5 shadow-[0_8px_22px_rgba(14,3,38,0.16)] flex items-center justify-between gap-3 text-xs text-[#14122E]"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-extrabold text-[13px] text-[#141132] truncate">
+                                    {prof.display_name}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400">·</span>
+                                  <span
+                                    className={`text-[10px] font-extrabold uppercase ${
+                                      profIsAdmin
+                                        ? 'text-[#5B18E5]'
+                                        : 'text-slate-500'
+                                    }`}
+                                  >
+                                    {profIsAdmin ? 'admin' : 'user'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] font-semibold text-[#5B18E5] truncate mt-0.5">
+                                  {prof.email || 'Tiada e-mel'}
+                                </div>
+                                <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                                  {prof.matric_no || 'UMS'} ·{' '}
+                                  {prof.faculty_short || 'UMS'} ·{' '}
+                                  {prof.availability_status || 'Available'}
+                                </div>
+                              </div>
+
+                              {!profIsAdmin ? (
+                                <button
+                                  type="button"
+                                  onClick={() => adminDeleteUser(prof.id)}
+                                  title="Padam Akaun Pengguna"
+                                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-[10.5px] font-extrabold flex items-center gap-1 shrink-0 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Padam</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-extrabold text-emerald-700 shrink-0">
+                                  Admin Utama
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  {/* TAB 3: MANAGE MODERATION REPORTS */}
+                  {adminTab === 'reports' && (
+                    <div className="space-y-3">
+                      {reports.map((rep) => {
+                        const reporter = profiles.find(
+                          (p) => p.id === rep.reporter_id
+                        );
+                        const targetProj = projects.find(
+                          (p) => p.id === rep.target_id
+                        );
+                        const noteVal =
+                          adminReportNotes[rep.id] ??
+                          rep.resolution_note ??
+                          '';
+
+                        return (
+                          <div
+                            key={rep.id}
+                            className="rounded-[22px] bg-white/96 border border-white p-3.5 shadow-[0_8px_22px_rgba(14,3,38,0.16)] space-y-2.5 text-xs text-[#14122E]"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="font-extrabold text-[13px] text-[#141132] truncate">
+                                  {targetProj?.title || rep.target_id}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  Dilaporkan oleh{' '}
+                                  {reporter?.display_name || 'Pengguna UMS'} ·{' '}
+                                  Status:{' '}
+                                  <span className="font-extrabold uppercase text-[#5B18E5]">
+                                    {rep.status}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <p className="text-[11.5px] text-slate-700 bg-[#F6F3FF] rounded-xl p-2.5">
+                              {rep.reason}
+                            </p>
+
+                            {rep.status === 'open' ? (
+                              <div className="space-y-2 pt-1">
+                                <input
+                                  type="text"
+                                  value={noteVal}
+                                  onChange={(e) =>
+                                    setAdminReportNotes((prev) => ({
+                                      ...prev,
+                                      [rep.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Nota tindakan Admin (pilihan)..."
+                                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[11px] focus:outline-none focus:border-[#5B18E5]"
+                                />
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      resolveReport(
+                                        rep.id,
+                                        'resolved',
+                                        noteVal ||
+                                          'Telah disemak dan diambil tindakan oleh Admin.'
+                                      )
+                                    }
+                                    className="py-2 rounded-xl bg-[#5B18E5] text-white font-extrabold text-[11px] cursor-pointer"
+                                  >
+                                    Selesaikan (Resolve)
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      resolveReport(
+                                        rep.id,
+                                        'dismissed',
+                                        noteVal || 'Laporan ditutup tanpa perubahan.'
+                                      )
+                                    }
+                                    className="py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] cursor-pointer"
+                                  >
+                                    Tolak (Dismiss)
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-[10.5px] text-emerald-700 font-semibold pt-1 border-t border-slate-100">
+                                Nota Admin:{' '}
+                                {rep.resolution_note || 'Diselesaikan oleh Admin.'}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Quick Submit New Moderation Report Card */}
+                      <div className="rounded-[22px] bg-white/95 border border-white p-3.5 shadow-sm space-y-2 text-xs text-[#14122E]">
+                        <div className="font-extrabold text-[12.5px] flex items-center gap-1.5">
+                          <Flag className="w-3.5 h-3.5 text-[#5B18E5]" />
+                          <span>Rekod Laporan Moderasi Baharu</span>
+                        </div>
+                        <select
+                          value={newReportTargetId}
+                          onChange={(e) => setNewReportTargetId(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[11.5px] font-semibold bg-white"
+                        >
+                          {projects.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              Aktiviti: {p.title}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={newReportReason}
+                          onChange={(e) => setNewReportReason(e.target.value)}
+                          placeholder="Sebab laporan atau catatan semakan..."
+                          className="w-full rounded-xl border border-slate-200 px-3 py-2 text-[11.5px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!newReportReason.trim()) return;
+                            submitReport({
+                              target_type: 'project',
+                              target_id: newReportTargetId,
+                              reason: newReportReason.trim(),
+                            });
+                            setNewReportReason('');
+                            notifyToast(
+                              'Laporan Direkodkan',
+                              'Laporan baharu telah ditambah ke senarai moderasi.',
+                              'success'
+                            );
+                          }}
+                          className="w-full py-2 rounded-xl bg-[#141132] text-white font-extrabold text-[11.5px] cursor-pointer"
+                        >
+                          Tambah Laporan
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </motion.div>
+        ) : activeTab === 'home' ? (
+          /* ---------------------------------------------------------
+             PAGE 1: HOME SCREEN (Scrollable with comfortable spacing & spring transition)
+             --------------------------------------------------------- */
+          <motion.div
+            key="tab-page-home"
+            initial={{opacity: 0, x: -26, scale: 0.99}}
+            animate={{opacity: 1, x: 0, scale: 1}}
+            exit={{opacity: 0, x: -20, scale: 0.99}}
+            transition={{type: 'spring', stiffness: 390, damping: 34}}
+            className="relative z-10 flex-1 min-h-0 px-4 pt-1 pb-5 flex flex-col gap-4 overflow-y-auto overflow-x-hidden no-scrollbar overscroll-y-contain"
+          >
+            {/* A. MULTI-CARD LOOPING STACK (Swipe Left = Buang from current deck | Swipe Right = Simpan to Bookmarks) */}
+            <div className="relative pt-3 select-none shrink-0">
+              {dismissedCardIds.length > 0 && activeDeckCards.length > 0 && (
+                <div className="mb-2.5 px-3 py-1.5 rounded-2xl bg-[#240954]/85 border border-purple-300/35 flex items-center justify-between text-[11px] text-purple-100 shadow-sm">
+                  <span>
+                    <strong className="text-white">
+                      {activeDeckCards.length}
+                    </strong>{' '}
+                    kad aktif ·{' '}
+                    <span className="text-rose-300 font-semibold">
+                      {dismissedCardIds.length} dibuang
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {lastDismissedCardId && (
+                      <button
+                        type="button"
+                        onClick={undoLastDismissedCard}
+                        className="px-2 py-0.5 rounded-lg bg-white/15 hover:bg-white/25 text-amber-200 font-extrabold text-[10px] cursor-pointer"
+                      >
+                        Undo
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={resetDismissedDeck}
+                      className="px-2 py-0.5 rounded-lg bg-[#6215E5] hover:bg-[#5210C4] text-white font-extrabold text-[10px] cursor-pointer"
+                    >
+                      Muat Semula
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {activeDeckCards.length === 0 ? (
+                <div className="rounded-[26px] p-[2px] bg-gradient-to-b from-white/95 via-purple-200/85 to-purple-400/50 shadow-[0_12px_30px_rgba(24,4,64,0.32)]">
+                  <div className="rounded-[24px] bg-[#F7F5FF] p-6 text-center space-y-3 text-[#14122E]">
+                    <div className="w-12 h-12 rounded-2xl bg-[#EAE2FF] border border-[#D8C7FF] text-[#5B18E5] flex items-center justify-center mx-auto shadow-xs">
+                      {cardsCatalog.length === 0 ? (
+                        <Plus className="w-6 h-6 stroke-[2.4]" />
+                      ) : (
+                        <RefreshCw className="w-6 h-6 stroke-[2.2]" />
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      <h2 className="text-lg font-extrabold font-display text-[#11102E]">
+                        {cardsCatalog.length === 0
+                          ? 'Belum Ada Aktiviti Kampus Diterbitkan'
+                          : 'Semua Kad Aktiviti Telah Disemak'}
+                      </h2>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        {cardsCatalog.length === 0
+                          ? 'Semua data contoh telah dibersihkan. Tekan butang di bawah untuk menerbitkan aktiviti atau projek pertama di ProjectLink UMS.'
+                          : `Anda telah membuang semua ${dismissedCardIds.length} kad daripada senarai semasa. Muat semula timbunan kad untuk meneroka semula aktiviti kampus UMS.`}
+                      </p>
+                    </div>
+                    <div className="pt-1 flex flex-col gap-2">
+                      {cardsCatalog.length === 0 ? (
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={openPostActivityPage}
+                            className="w-full py-2.5 px-4 rounded-xl bg-[#6215E5] hover:bg-[#5011BE] text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4 stroke-[2.5]" />
+                            <span>Post Aktiviti Pertama</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              seedStarterActivities();
+                              setCardIndex(0);
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl bg-[#EFE9FF] hover:bg-[#E2D6FF] text-[#4C14B8] text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <Sparkles className="w-4 h-4 text-[#6215E5]" />
+                            <span>Muat 6 Aktiviti Contoh Rentas Fakulti</span>
+                          </button>
+                        </div>
+                      ) : homeStrictFilterMode && selectedTags.length > 0 ? (
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHomeStrictFilterMode(false);
+                              setCardIndex(0);
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl bg-[#6215E5] hover:bg-[#5011BE] text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                          >
+                            <SlidersHorizontal className="w-4 h-4" />
+                            <span>Papar Semua Kad Mengikut Skor</span>
+                          </button>
+                          {dismissedCardIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={resetDismissedDeck}
+                              className="w-full py-2 px-4 rounded-xl bg-[#EFE9FF] text-[#4C14B8] text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Muat Semula Kad Dibuang</span>
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={resetDismissedDeck}
+                          className="w-full py-2.5 px-4 rounded-xl bg-[#6215E5] hover:bg-[#5011BE] text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          <span>Muat Semula Semua Kad</span>
+                        </button>
+                      )}
+                      <div className="flex items-center gap-2">
+                        {lastDismissedCardId && (
+                          <button
+                            type="button"
+                            onClick={undoLastDismissedCard}
+                            className="flex-1 py-2 px-3 rounded-xl bg-white border border-purple-200 text-[#3F1994] text-xs font-bold hover:bg-purple-50 cursor-pointer"
+                          >
+                            Undo Kad Terakhir
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('activity');
+                            setActiveSidePage(null);
+                          }}
+                          className="flex-1 py-2 px-3 rounded-xl bg-[#EAE2FF] text-[#5B18E5] text-xs font-extrabold hover:bg-[#DFD2FF] cursor-pointer"
+                        >
+                          Lihat Bookmarks ({searchCategoryCounts.Saved})
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                (activeDeckCards.length >= 3
+                  ? [2, 1, 0]
+                  : activeDeckCards.length === 2
+                  ? [1, 0]
+                  : [0]
+                ).map((stackOffset) => {
+                  const stepNumber = cardIndex + stackOffset;
+                  const cardItem =
+                    activeDeckCards[stepNumber % activeDeckCards.length] ||
+                    activeDeckCards[0];
+                  const isFront = stackOffset === 0;
+                  const cardIsSaved = Boolean(
+                    currentUser &&
+                      savedProjects.some(
+                        (s) =>
+                          s.student_id === currentUser.id &&
+                          s.project_id === cardItem.id
+                      )
+                  );
+
+                  // Smooth promotion transforms for cards behind the front card
+                  const scaleVal = isFront
+                    ? 1
+                    : stackOffset === 1
+                    ? Number((0.935 + 0.065 * dragProgress).toFixed(3))
+                    : Number((0.875 + 0.06 * dragProgress).toFixed(3));
+
+                  const translateYVal = isFront
+                    ? 0
+                    : stackOffset === 1
+                    ? Number(((1 - dragProgress) * -9).toFixed(1))
+                    : Number((-9 - (1 - dragProgress) * 8).toFixed(1));
+
+                  const opacityVal = isFront
+                    ? flyOffDir
+                      ? 0
+                      : 1
+                    : stackOffset === 1
+                    ? Number((0.72 + 0.28 * dragProgress).toFixed(2))
+                    : Number((0.38 + 0.34 * dragProgress).toFixed(2));
+
+                  const cardTransform = isFront
+                    ? topCardTransform
+                    : `translate3d(0, ${translateYVal}px, 0) scale(${scaleVal})`;
+
+                  return (
+                    <div
+                      key={`deck-card-${cardItem.id}-offset-${stackOffset}`}
+                      aria-hidden={!isFront}
+                      onTouchStart={
+                        isFront
+                          ? (e) =>
+                              handleDragStart(
+                                e.touches[0].clientX,
+                                e.touches[0].clientY
+                              )
+                          : undefined
+                      }
+                      onTouchMove={
+                        isFront
+                          ? (e) =>
+                              handleDragMove(
+                                e.touches[0].clientX,
+                                e.touches[0].clientY
+                              )
+                          : undefined
+                      }
+                      onTouchEnd={isFront ? handleDragEnd : undefined}
+                      onMouseDown={
+                        isFront
+                          ? (e) => handleDragStart(e.clientX, e.clientY)
+                          : undefined
+                      }
+                      onMouseMove={
+                        isFront
+                          ? (e) => handleDragMove(e.clientX, e.clientY)
+                          : undefined
+                      }
+                      onMouseUp={isFront ? handleDragEnd : undefined}
+                      onMouseLeave={
+                        isFront
+                          ? () => {
+                              if (isDraggingCard) handleDragEnd();
+                            }
+                          : undefined
+                      }
+                      style={{
+                        transform: cardTransform,
+                        opacity: opacityVal,
+                      }}
+                      className={`${
+                        isFront
+                          ? 'relative z-20 cursor-grab active:cursor-grabbing touch-pan-y'
+                          : stackOffset === 1
+                          ? 'absolute inset-x-0 top-3 z-10 pointer-events-none'
+                          : 'absolute inset-x-0 top-3 z-0 pointer-events-none'
+                      } rounded-[26px] p-[2px] bg-gradient-to-b from-white/95 via-purple-200/85 to-purple-400/50 shadow-[0_12px_30px_rgba(24,4,64,0.32)] ${
+                        isFront && isDraggingCard
+                          ? 'transition-none'
+                          : 'transition-all duration-230 ease-out'
+                      }`}
+                    >
+                      {/* Dynamic Swipe Stamps on Front Card while dragging (Left = BUANG, Right = SIMPAN) */}
+                      {isFront &&
+                        (dragOffset.x < -25 || flyOffDir === 'left') && (
+                          <div className="absolute top-12 right-4 z-30 pointer-events-none px-3.5 py-1 rounded-xl bg-rose-600/95 border-2 border-white text-white font-extrabold text-xs tracking-wider uppercase shadow-xl transform rotate-12">
+                            ← BUANG
+                          </div>
+                        )}
+                      {isFront &&
+                        (dragOffset.x > 25 || flyOffDir === 'right') && (
+                          <div className="absolute top-12 left-4 z-30 pointer-events-none px-3.5 py-1 rounded-xl bg-[#5B18E5]/95 border-2 border-white text-white font-extrabold text-xs tracking-wider uppercase shadow-xl transform -rotate-12">
+                            SIMPAN &amp; INFO →
+                          </div>
+                        )}
+
+                      <div className="rounded-[24px] bg-[#F7F5FF] overflow-hidden">
+                        {/* Banner Image with Trending, Bookmark, Owner Edit Poster, 3 Dots & Purple Diagonal Stripes Wave */}
+                        <div className="relative h-[152px] w-full overflow-hidden bg-[#2D0C5E]">
+                          <ActivityCardBanner
+                            cardId={cardItem.id}
+                            bannerUrl={cardItem.bannerUrl}
+                            bannerPreset={cardItem.bannerPreset}
+                            bannerPositionY={cardItem.bannerPositionY}
+                          />
+
+                          {/* Trending Pill (Top-Left) */}
+                          <div className="absolute top-3 left-3.5 z-10 flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FFE4DC]/95 backdrop-blur-xs text-[#DF3415] text-[12px] font-bold shadow-sm">
+                            <Flame className="w-3.5 h-3.5 fill-[#F04423] text-[#F04423]" />
+                            <span>Trending</span>
+                          </div>
+
+                          {/* Owner-Only Quick Change Banner Button on Front Card */}
+                          {cardItem.isOwner && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditActivityBannerModal(cardItem.id);
+                              }}
+                              aria-label="Tukar Gambar Poster Aktiviti"
+                              className="absolute top-3 right-13 z-10 h-8 px-2.5 rounded-[11px] bg-[#1A063E]/90 hover:bg-[#2B0B63] text-white border border-purple-300/60 text-[10px] font-extrabold flex items-center gap-1 shadow-sm cursor-pointer"
+                            >
+                              <Camera className="w-3.5 h-3.5 text-amber-300" />
+                              <span>Tukar Gambar</span>
+                            </button>
+                          )}
+
+                          {/* Bookmark Button (Top-Right) */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSaveProject(cardItem.id);
+                            }}
+                            aria-label="Save activity"
+                            className={`absolute top-3 right-3.5 z-10 w-8 h-8 rounded-[11px] flex items-center justify-center shadow-sm transition-colors cursor-pointer ${
+                              cardIsSaved
+                                ? 'bg-[#6215E5] text-white'
+                                : 'bg-white/95 text-[#14122E]'
+                            }`}
+                          >
+                            <Bookmark
+                              className={`w-4 h-4 stroke-[2.1] ${
+                                cardIsSaved ? 'fill-current' : ''
+                              }`}
+                            />
+                          </button>
+
+                          {/* Pagination Dots on the Banner (Bottom Center) */}
+                          <div className="absolute bottom-5 inset-x-0 z-20 flex items-center justify-center gap-1.5">
+                            {activeDeckCards.slice(0, 4).map((c, dotIdx) => {
+                              const isActiveDot =
+                                stepNumber % activeDeckCards.length === dotIdx;
+                              return (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCardIndex(dotIdx);
+                                  }}
+                                  aria-label={`Activity card ${dotIdx + 1}`}
+                                  className={`w-2 h-2 rounded-full transition-all cursor-pointer ${
+                                    isActiveDot
+                                      ? 'bg-white scale-125 shadow-[0_0_6px_rgba(255,255,255,0.9)]'
+                                      : 'bg-white/60 hover:bg-white'
+                                  }`}
+                                />
+                              );
+                            })}
+                          </div>
+
+                          {/* Curved Purple Wave + 4 Diagonal Stripes on Right + White Wave Bottom */}
+                          <svg
+                            className="absolute -bottom-[1px] inset-x-0 w-full h-9 pointer-events-none"
+                            viewBox="0 0 400 44"
+                            preserveAspectRatio="none"
+                          >
+                            <path
+                              d="M210,44 C265,12 335,2 400,6 L400,44 Z"
+                              fill="#4B0FB8"
+                            />
+                            <g fill="#9F67FF" opacity="0.65">
+                              <polygon points="300,26 308,26 318,12 310,12" />
+                              <polygon points="320,26 328,26 338,12 330,12" />
+                              <polygon points="340,26 348,26 358,12 350,12" />
+                              <polygon points="360,26 368,26 378,12 370,12" />
+                            </g>
+                            <path
+                              d="M0,24 C115,-2 260,34 400,40 L400,44 L0,44 Z"
+                              fill="#F7F5FF"
+                            />
+                          </svg>
+                        </div>
+
+                        {/* Card Text & Metadata Body */}
+                        <div className="px-4 pt-1 pb-2.5 text-[#14122E]">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <h1 className="text-[21px] font-extrabold font-display tracking-tight text-[#11102E] leading-tight truncate">
+                                {cardItem.title}
+                              </h1>
+
+                              <div className="mt-1 space-y-0.5 text-[11.5px] font-medium text-[#211E3A]">
+                                <div className="flex items-center gap-2">
+                                  <Calendar className="w-3.5 h-3.5 text-[#1E1B38] shrink-0 stroke-[2.1]" />
+                                  <span>{cardItem.dateText}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <MapPin className="w-3.5 h-3.5 text-[#1E1B38] shrink-0 stroke-[2.1]" />
+                                  <span>{cardItem.locationText}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Users className="w-3.5 h-3.5 text-[#1E1B38] shrink-0 stroke-[2.1]" />
+                                  <span>{cardItem.audienceText}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Right Box: [</> Program Fakulti] */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCardInfoModal(cardItem.id);
+                              }}
+                              className="mt-3.5 shrink-0 w-[82px] py-2 px-2 rounded-[18px] bg-[#EAE2FF] border border-[#D8C7FF] flex flex-col items-center justify-center text-[#5A17E0] hover:bg-[#E0D4FF] transition-colors cursor-pointer"
+                            >
+                              <div className="border-[1.8px] border-[#5A17E0] rounded-[4px] px-1.5 py-0.5 text-[9px] font-mono font-bold leading-none mb-1">
+                                &lt;/&gt;
+                              </div>
+                              <span className="text-[11px] font-bold leading-tight">
+                                {cardItem.facultyLabel1}
+                              </span>
+                              <span className="text-[11px] font-bold leading-tight">
+                                {cardItem.facultyLabel2}
+                              </span>
+                            </button>
+                          </div>
+
+                          {/* Subtle Divider */}
+                          <div className="my-2 border-t border-slate-200/90" />
+
+                          {/* Purple Vertical Bar + Description */}
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-1.5 h-8 rounded-full bg-[#5E17EB] shrink-0" />
+                            <p className="text-[11.5px] text-[#1A1833] font-medium leading-snug line-clamp-2">
+                              {cardItem.description}
+                            </p>
+                          </div>
+
+                          {/* 3 Lavender Tag Pills */}
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <span className="flex-1 py-1 px-2.5 rounded-full bg-[#E9E0FF] text-[#5315D0] text-[11px] font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                              <span className="font-mono font-extrabold text-[10px]">
+                                &lt;/&gt;
+                              </span>
+                              <span>{cardItem.tags[0] || 'Tech'}</span>
+                            </span>
+                            <span className="flex-1 py-1 px-2.5 rounded-full bg-[#E9E0FF] text-[#5315D0] text-[11px] font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                              <Users className="w-3.5 h-3.5 stroke-[2.2]" />
+                              <span>{cardItem.tags[1] || 'Networking'}</span>
+                            </span>
+                            <span className="flex-1 py-1 px-2.5 rounded-full bg-[#E9E0FF] text-[#5315D0] text-[11px] font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap">
+                              <Trophy className="w-3.5 h-3.5 stroke-[2.2]" />
+                              <span>{cardItem.tags[2] || 'Competition'}</span>
+                            </span>
+                          </div>
+
+                          {/* Interactive Swipe Guide Row (Swipe Left = Buang | Swipe Right = Simpan & Info) */}
+                          <div className="mt-2 pt-1.5 border-t border-purple-200/60 flex items-center justify-between text-[10px] font-semibold italic text-[#3F1994]">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                triggerSwipeLeft();
+                              }}
+                              className="inline-flex items-center gap-1 text-rose-700 hover:text-rose-600 cursor-pointer"
+                            >
+                              <span className="not-italic font-bold">←</span>
+                              <span>Swipe kiri untuk buang</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                triggerSwipeRight();
+                              }}
+                              className="inline-flex items-center gap-1 text-[#5B18E5] hover:text-[#4B0FB8] cursor-pointer"
+                            >
+                              <span>Swipe kanan untuk simpan &amp; info</span>
+                              <span className="not-italic font-bold">→</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             {/* B. WHITE MATCHES POTENTIAL CARD (Live drag reaction + Spring Pop Chart + Count-Up + Badge Shimmer) */}
@@ -5663,7 +8963,11 @@ export function MainMobileAppInterface() {
                 {/* Left 78% Ring inside White Card */}
                 <button
                   type="button"
-                  onClick={() => openCardInfoModal(currentCard.id)}
+                  onClick={() =>
+                    currentCard
+                      ? openCardInfoModal(currentCard.id)
+                      : openPostActivityPage()
+                  }
                   style={matchRingLiveStyle}
                   className="relative w-[84px] h-[84px] shrink-0 flex items-center justify-center cursor-pointer group"
                 >
@@ -5745,7 +9049,9 @@ export function MainMobileAppInterface() {
                         stroke="url(#whiteCardRingGrad)"
                         strokeWidth="7.5"
                         strokeDasharray={ringCircumference}
-                        strokeDashoffset={ringOffset}
+                        strokeDashoffset={
+                          currentCard ? ringOffset : ringCircumference
+                        }
                         strokeLinecap="round"
                         fill="transparent"
                         className="transition-[stroke-dashoffset] duration-75 ease-out"
@@ -5756,7 +9062,7 @@ export function MainMobileAppInterface() {
                       key={`num-pop-${matchAnimKey}`}
                       className="animate-match-number-pop absolute text-[21px] font-extrabold font-display text-[#12102E] tracking-tight tabular-nums"
                     >
-                      {effectiveRingScore}%
+                      {currentCard ? `${effectiveRingScore}%` : '--'}
                     </span>
                   </div>
                 </button>
@@ -5772,10 +9078,14 @@ export function MainMobileAppInterface() {
                     </h2>
                     <button
                       type="button"
-                      onClick={() => openCardInfoModal(currentCard.id)}
+                      onClick={() =>
+                        currentCard
+                          ? openCardInfoModal(currentCard.id)
+                          : openPostActivityPage()
+                      }
                       className="text-[11px] font-bold text-[#3B188C] hover:underline inline-flex items-center gap-0.5 shrink-0 cursor-pointer"
                     >
-                      <span>see more...</span>
+                      <span>{currentCard ? 'see more...' : 'post activity'}</span>
                       <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
                     </button>
                   </div>
@@ -5798,7 +9108,11 @@ export function MainMobileAppInterface() {
                         ★
                       </div>
                       <span className="relative z-10 text-[12.5px] font-extrabold text-white tracking-tight">
-                        {matchData.score >= 70 ? 'High Match!' : 'Good Match!'}
+                        {!currentCard
+                          ? 'Sedia Dipadankan'
+                          : matchData.score >= 70
+                          ? 'High Match!'
+                          : 'Good Match!'}
                       </span>
                     </div>
 
@@ -5825,11 +9139,17 @@ export function MainMobileAppInterface() {
                   </div>
 
                   <p className="mt-1 text-[11px] font-medium text-[#1D1B36] leading-snug">
-                    Great fit! This activity matches{' '}
-                    <span className="font-bold tabular-nums text-[#4C1D95]">
-                      {effectiveRingScore}%
-                    </span>{' '}
-                    of your interests and profile.
+                    {currentCard ? (
+                      <>
+                        Great fit! This activity matches{' '}
+                        <span className="font-bold tabular-nums text-[#4C1D95]">
+                          {effectiveRingScore}%
+                        </span>{' '}
+                        of your interests and profile.
+                      </>
+                    ) : (
+                      'Terbitkan aktiviti atau muat contoh UMS untuk melihat padanan kemahiran & masa anda.'
+                    )}
                   </p>
                 </div>
               </div>
@@ -5862,14 +9182,31 @@ export function MainMobileAppInterface() {
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleRandomize}
-                  className="text-[13px] font-semibold inline-flex items-center gap-1.5 hover:opacity-85 transition-opacity cursor-pointer"
-                >
-                  <Shuffle className="w-3.5 h-3.5 stroke-[2.2]" />
-                  <span>Randomize</span>
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHomeStrictFilterMode((prev) => !prev);
+                      setCardIndex(0);
+                    }}
+                    className={`text-[11.5px] font-bold px-2.5 py-0.5 rounded-full border transition-all cursor-pointer whitespace-nowrap ${
+                      homeStrictFilterMode
+                        ? 'bg-amber-300 text-[#141132] border-amber-200'
+                        : 'bg-white/10 text-white/85 border-white/30 hover:bg-white/20'
+                    }`}
+                  >
+                    {homeStrictFilterMode ? 'Tapis Ketat: ON' : 'Susun Skor'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleRandomize}
+                    className="text-[13px] font-semibold inline-flex items-center gap-1.5 hover:opacity-85 transition-opacity cursor-pointer whitespace-nowrap"
+                  >
+                    <Shuffle className="w-3.5 h-3.5 stroke-[2.2]" />
+                    <span>Randomize</span>
+                  </button>
+                </div>
               </div>
 
               {/* Unified Multi-Row Wrapping Filter Pills — extra filters automatically stack below */}
@@ -5884,7 +9221,7 @@ export function MainMobileAppInterface() {
                     <button
                       key={label}
                       type="button"
-                      onClick={() => toggleFilterTag(label)}
+                      onClick={() => handleToggleHomeFilter(label)}
                       className={`h-[32px] px-3 rounded-full border text-[11.5px] font-medium inline-flex items-center gap-1.5 backdrop-blur-md transition-all cursor-pointer whitespace-nowrap ${
                         isOn
                           ? 'bg-white/15 border-white/75 text-white shadow-[0_0_10px_rgba(255,255,255,0.18)]'
@@ -5899,7 +9236,7 @@ export function MainMobileAppInterface() {
 
                 <button
                   type="button"
-                  onClick={() => toggleFilterTag('Extrovert')}
+                  onClick={() => handleToggleHomeFilter('Extrovert')}
                   className={`h-[32px] px-3.5 rounded-full border text-[11.5px] font-medium inline-flex items-center gap-1.5 backdrop-blur-md transition-all cursor-pointer whitespace-nowrap ${
                     selectedTags.includes('Extrovert')
                       ? 'bg-white/15 border-white/75 text-white shadow-[0_0_10px_rgba(255,255,255,0.18)]'
@@ -5912,7 +9249,7 @@ export function MainMobileAppInterface() {
 
                 <button
                   type="button"
-                  onClick={() => toggleFilterTag('Female only')}
+                  onClick={() => handleToggleHomeFilter('Female only')}
                   className={`h-[32px] px-3.5 rounded-full border text-[11.5px] font-medium inline-flex items-center gap-1.5 backdrop-blur-md transition-all cursor-pointer whitespace-nowrap ${
                     selectedTags.includes('Female only')
                       ? 'bg-white/15 border-white/75 text-white shadow-[0_0_10px_rgba(255,255,255,0.18)]'
@@ -5927,7 +9264,7 @@ export function MainMobileAppInterface() {
                   <button
                     key={tag}
                     type="button"
-                    onClick={() => toggleFilterTag(tag)}
+                    onClick={() => handleToggleHomeFilter(tag)}
                     className="h-[32px] px-3 rounded-full bg-white/20 border border-white/75 text-white text-[11.5px] font-medium inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer shadow-[0_0_10px_rgba(255,255,255,0.14)]"
                   >
                     <span>{tag}</span>
@@ -5936,477 +9273,599 @@ export function MainMobileAppInterface() {
                 ))}
               </div>
             </div>
-          </div>
+          </motion.div>
         ) : (
           /* ---------------------------------------------------------
-             PAGE 2: PROFILE SCREEN (100% Match to Image 2 — Driven by Normalized Store)
+             PAGE 2: ACTIVITY SCREEN (SAVED ACTIVITIES HUB)
+             (CONTINUOUS EDITORIAL MAGAZINE STREAM — NO ROUNDED SQUARE BOXES)
              --------------------------------------------------------- */
-          <div className="relative z-10 flex-1 min-h-0 px-4 pt-1 pb-5 flex flex-col gap-3 overflow-y-auto no-scrollbar overscroll-y-contain">
-            {/* 1. PROFILE HERO CARD */}
-            <div className="relative shrink-0 rounded-[24px] p-[1.5px] bg-gradient-to-b from-white/95 to-purple-300/60 shadow-[0_10px_28px_rgba(20,3,52,0.3)]">
-              <div className="rounded-[23px] bg-[#F8F6FF] overflow-hidden">
-                {/* Sunset Campus Banner */}
-                <div className="relative h-[68px] w-full overflow-hidden bg-[#320C6B]">
-                  <div
-                    className="absolute inset-0 bg-no-repeat"
-                    style={{
-                      backgroundImage:
-                        'url("/assets/aistudio/file_0000000099708211a698e06bd291137a_0ad82db4.png")',
-                      backgroundSize: '122% auto',
-                      backgroundPosition: '58% 12%',
-                    }}
-                  />
-                  <svg
-                    className="absolute inset-0 w-full h-full pointer-events-none"
-                    viewBox="0 0 400 72"
-                    preserveAspectRatio="none"
-                  >
-                    <path
-                      d="M0,56 C160,44 290,54 400,70 L400,72 L0,72 Z"
-                      fill="#F8F6FF"
-                    />
-                  </svg>
-
-                  {/* SDP: 500 & Edit Profile Pills on Bottom-Right of Banner */}
-                  <div className="absolute bottom-2 right-2.5 z-20 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setActiveModal('sdp-info')}
-                      className="h-6 px-2.5 rounded-full bg-white/95 border border-purple-200 text-[#4C1D95] text-[10.5px] font-extrabold shadow-xs inline-flex items-center gap-1 hover:bg-purple-50 transition-colors cursor-pointer"
-                    >
-                      <Award className="w-3 h-3 text-[#6215E5]" />
-                      <span>SDP: {totalSdpPoints}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={openEditProfileModal}
-                      className="h-6 px-2.5 rounded-full bg-white/95 border border-purple-200 text-[#4C1D95] text-[10.5px] font-extrabold shadow-xs inline-flex items-center gap-1 hover:bg-purple-50 transition-colors cursor-pointer"
-                    >
-                      <Pencil className="w-2.5 h-2.5 text-[#6215E5]" />
-                      <span>Edit Profile</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={triggerSignOut}
-                      title="Log Keluar"
-                      className="h-6 px-2 rounded-full bg-white/95 border border-rose-200 text-rose-600 text-[10.5px] font-extrabold shadow-xs inline-flex items-center gap-1 hover:bg-rose-50 transition-colors cursor-pointer"
-                    >
-                      <LogOut className="w-2.5 h-2.5" />
-                    </button>
+          <motion.div
+            key="tab-page-activity"
+            initial={{opacity: 0, x: 26, scale: 0.99}}
+            animate={{opacity: 1, x: 0, scale: 1}}
+            exit={{opacity: 0, x: 20, scale: 0.99}}
+            transition={{type: 'spring', stiffness: 390, damping: 34}}
+            className="relative z-10 flex-1 min-h-0 rounded-t-[28px] bg-[#FAF9FF] border-t border-white/90 text-[#14122E] px-5 pt-4 pb-24 flex flex-col overflow-y-auto no-scrollbar overscroll-y-contain shadow-[0_-10px_28px_rgba(14,3,38,0.2)]"
+          >
+            {/* 1. OPEN EDITORIAL MASTHEAD & LIVE TELEMETRY STRIP */}
+            <div className="border-b border-purple-200/80 pb-4 space-y-4 shrink-0">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-extrabold uppercase tracking-widest text-[#5B18E5] flex items-center gap-1.5">
+                    <Bookmark className="w-3 h-3 fill-current" />
+                    <span>Arkib Pilihan Pelajar</span>
                   </div>
+                  <h2 className="text-[20px] font-extrabold font-display leading-tight text-[#141132] tracking-tight mt-0.5">
+                    Aktiviti Disimpan
+                  </h2>
                 </div>
 
-                {/* Profile Content Row with Overlapping Circular Avatar on Left */}
-                <div className="px-3.5 pb-2.5 pt-0.5 flex items-start gap-3 relative">
-                  <div className="-mt-10 relative w-[86px] h-[86px] shrink-0">
-                    <div
-                      onClick={openProfilePhotoModal}
-                      title="Tekan untuk muat naik atau laras foto profil"
-                      className="w-full h-full rounded-full border-[3px] border-white shadow-md overflow-hidden bg-purple-900 cursor-pointer"
-                    >
-                      <FahrinPortraitAvatar
-                        variant={currentUser?.avatar_variant || 0}
-                        avatarUrl={currentUser?.avatar_url}
-                        zoom={currentUser?.avatar_zoom || 1}
-                        offsetX={currentUser?.avatar_offset_x || 0}
-                        offsetY={currentUser?.avatar_offset_y || 0}
-                      />
+                {/* Inline Telemetry Numbers (Zero Boxy Pills) */}
+                <div className="flex items-center divide-x divide-purple-200/80 text-right">
+                  <div className="pr-3">
+                    <div className="text-sm font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                      {searchCategoryCounts.Saved}
                     </div>
-                    <button
-                      type="button"
-                      onClick={openProfilePhotoModal}
-                      aria-label="Muat Naik atau Tukar Foto Profil"
-                      className="absolute -bottom-0.5 right-0 w-7 h-7 rounded-full bg-[#DDD0FF] border-2 border-white text-[#5B18E5] shadow-xs flex items-center justify-center hover:bg-[#D0BFFF] transition-colors cursor-pointer"
-                    >
-                      <Camera className="w-3.5 h-3.5 stroke-[2.2]" />
-                    </button>
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">
+                      Simpanan
+                    </div>
                   </div>
+                  <div className="px-3">
+                    <div className="text-sm font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                      {filteredSavedCatalog.length > 0
+                        ? `${Math.round(
+                            filteredSavedCatalog.reduce(
+                              (acc, cur) => acc + cur.matchScore,
+                              0
+                            ) / filteredSavedCatalog.length
+                          )}%`
+                        : '0%'}
+                    </div>
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">
+                      Purata
+                    </div>
+                  </div>
+                  <div className="pl-3">
+                    <div className="text-sm font-extrabold font-display text-[#5B18E5] tabular-nums leading-none">
+                      {filteredSavedCatalog.reduce(
+                        (acc, cur) =>
+                          acc + (cur.projectObj.min_weekly_hours || 6),
+                        0
+                      )}
+                      j
+                    </div>
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">
+                      Seminggu
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                  {/* Fahrin Details from Normalized Profile */}
-                  <div className="flex-1 min-w-0 pt-0.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h1 className="text-[19px] font-extrabold font-display text-[#12102E] leading-none">
-                        {currentUser?.display_name || 'Fahrin'}
-                      </h1>
+              {/* Minimalist Bottom-Border Editorial Search */}
+              <div className="relative flex items-center border-b-2 border-purple-200 focus-within:border-[#5B18E5] transition-colors">
+                <Search className="w-4 h-4 text-[#5B18E5] shrink-0 mr-2.5" />
+                <input
+                  type="text"
+                  value={savedSearchQuery}
+                  onChange={(e) => setSavedSearchQuery(e.target.value)}
+                  placeholder="Cari aktiviti disimpan mengikut tajuk, lokasi, kemahiran..."
+                  className="w-full py-2 bg-transparent text-xs font-semibold text-[#141132] placeholder:text-slate-400 focus:outline-none"
+                />
+                {savedSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSavedSearchQuery('')}
+                    className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Sliding Underline Category Tabs */}
+              <div className="flex items-center justify-between gap-3 pt-0.5">
+                <div className="flex items-center gap-4 overflow-x-auto no-scrollbar flex-1 border-b border-purple-100">
+                  {[
+                    {
+                      id: 'All',
+                      label: 'Semua',
+                      count: searchCategoryCounts.Saved,
+                    },
+                    {
+                      id: 'High Match',
+                      label: 'Padanan >70%',
+                      count: searchCategoryCounts['High Match'] || 0,
+                    },
+                    {
+                      id: 'Competition',
+                      label: 'Competition',
+                      count: searchCategoryCounts.Competition || 0,
+                    },
+                    {
+                      id: 'Innovation',
+                      label: 'Innovation',
+                      count: searchCategoryCounts.Innovation || 0,
+                    },
+                    {
+                      id: 'Community',
+                      label: 'Community',
+                      count: searchCategoryCounts.Community || 0,
+                    },
+                    {
+                      id: 'Assignment',
+                      label: 'Assignment',
+                      count: searchCategoryCounts.Assignment || 0,
+                    },
+                  ].map(({id, label, count}) => {
+                    const active = savedCategoryFilter === id;
+                    return (
                       <button
+                        key={id}
                         type="button"
-                        onClick={() =>
-                          updateProfileMetadata({
-                            availability_status:
-                              availabilityStatus === 'Available'
-                                ? 'In Team'
-                                : availabilityStatus === 'In Team'
-                                ? 'Busy'
-                                : 'Available',
-                          })
-                        }
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer ${
-                          availabilityStatus === 'Available'
-                            ? 'bg-[#DCFCE7] text-[#15803D]'
-                            : availabilityStatus === 'In Team'
-                            ? 'bg-[#E0E7FF] text-[#3730A3]'
-                            : 'bg-[#FEE2E2] text-[#B91C1C]'
+                        onClick={() => setSavedCategoryFilter(id)}
+                        className={`relative pb-2 text-[11px] font-extrabold whitespace-nowrap cursor-pointer transition-colors flex items-center gap-1 shrink-0 ${
+                          active
+                            ? 'text-[#5B18E5]'
+                            : 'text-slate-400 hover:text-slate-700'
                         }`}
                       >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            availabilityStatus === 'Available'
-                              ? 'bg-[#16A34A]'
-                              : availabilityStatus === 'In Team'
-                              ? 'bg-[#4F46E5]'
-                              : 'bg-[#DC2626]'
-                          }`}
-                        />
-                        <span>{availabilityStatus}</span>
-                        <ChevronDown className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-
-                    <div className="mt-1 text-[11px] flex items-center gap-1.5 text-[#1E1B4B]">
-                      <span className="font-extrabold">
-                        {currentUser?.matric_no || 'A2412345'}
-                      </span>
-                      <span className="text-slate-300">|</span>
-                      <span className="font-medium text-slate-700 truncate">
-                        {currentUser?.programme || 'Software Engineering'}
-                      </span>
-                    </div>
-
-                    <div className="mt-0.5 flex items-center gap-1 text-[10.5px] font-medium text-[#2A264E] truncate">
-                      <Layers className="w-3 h-3 text-[#4C1D95] shrink-0" />
-                      <span className="truncate">
-                        {currentUser?.faculty ||
-                          'Fakulti Komputeran dan Informatik (FKI), UMS'}
-                      </span>
-                    </div>
-
-                    {/* 3 Lavender Contact Pills: Email, Phone, LinkedIn */}
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedContactType('email');
-                          setActiveModal('contact-info');
-                        }}
-                        aria-label="Email Fahrin"
-                        className="h-6 px-3.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] flex items-center justify-center transition-colors cursor-pointer"
-                      >
-                        <Mail className="w-3.5 h-3.5 stroke-[2.2]" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedContactType('phone');
-                          setActiveModal('contact-info');
-                        }}
-                        aria-label="Call Fahrin"
-                        className="h-6 px-3.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] flex items-center justify-center transition-colors cursor-pointer"
-                      >
-                        <Phone className="w-3.5 h-3.5 stroke-[2.2]" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedContactType('linkedin');
-                          setActiveModal('contact-info');
-                        }}
-                        aria-label="Fahrin LinkedIn"
-                        className="h-6 px-3.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] text-[11px] font-extrabold flex items-center justify-center transition-colors cursor-pointer"
-                      >
-                        in
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. ABOUT ME CARD */}
-            <div className="relative rounded-[20px] bg-[#F3EEFF]/95 px-3.5 py-2 shadow-md border border-white/85">
-              <button
-                type="button"
-                onClick={openEditAboutModal}
-                aria-label="Edit About Me"
-                className="absolute top-2 right-2.5 w-6 h-6 rounded-lg bg-white text-[#5B18E5] shadow-xs flex items-center justify-center hover:bg-purple-50 transition-colors cursor-pointer"
-              >
-                <Pencil className="w-3 h-3 stroke-[2.2]" />
-              </button>
-
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 rounded-full bg-[#5B18E5]" />
-                <h2 className="text-[13.5px] font-extrabold font-display text-[#12102E]">
-                  About Me
-                </h2>
-              </div>
-
-              <p className="mt-1 pl-3 text-[10.8px] text-[#1D1B38] font-medium leading-snug pr-6 line-clamp-3">
-                {currentUser?.bio ||
-                  "SE student at UMS who's passionate about building practical and impactful projects, especially in web and app development. Always open to collaborate and learn new things!"}
-              </p>
-            </div>
-
-            {/* 3. 4-COLUMN ACADEMIC & LOCATION STRIP CARD */}
-            <div className="rounded-[20px] bg-[#F8F6FF] py-2 px-1.5 shadow-md border border-white/90 grid grid-cols-4 divide-x divide-slate-200/90 text-center items-center">
-              <div className="px-1 flex flex-col items-center">
-                <Layers className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
-                <span className="text-[9.5px] text-slate-500 font-medium">
-                  Year of Study
-                </span>
-                <span className="text-[11.5px] font-extrabold text-[#12102E] mt-0.5">
-                  Year {currentUser?.year_of_study || 2}
-                </span>
-              </div>
-
-              <div className="px-1 flex flex-col items-center">
-                <Code2 className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
-                <span className="text-[9.5px] text-slate-500 font-medium">
-                  Programme
-                </span>
-                <span className="text-[10.5px] font-extrabold text-[#12102E] leading-tight mt-0.5">
-                  Software
-                  <br />
-                  Engineering
-                </span>
-              </div>
-
-              <div className="px-1 flex flex-col items-center">
-                <Building2 className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
-                <span className="text-[9.5px] text-slate-500 font-medium">
-                  Faculty
-                </span>
-                <span className="text-[11.5px] font-extrabold text-[#12102E] mt-0.5">
-                  {currentUser?.faculty_short || 'FKI'}
-                </span>
-              </div>
-
-              <div className="px-1 flex flex-col items-center">
-                <MapPin className="w-4 h-4 text-[#5B18E5] mb-0.5 stroke-[2.2]" />
-                <span className="text-[9.5px] text-slate-500 font-medium">
-                  Location
-                </span>
-                <span className="text-[10.5px] font-extrabold text-[#12102E] leading-tight mt-0.5">
-                  {currentUser?.location || 'Kota Kinabalu'}
-                </span>
-              </div>
-            </div>
-
-            {/* 4. BOTTOM SPLIT CARD: SKILLS & INTERESTS (Left) | HISTORY (Right) */}
-            <div className="flex-1 min-h-[215px] shrink-0 rounded-[22px] bg-[#F8F6FF] p-3 shadow-lg border border-white/90 grid grid-cols-12 gap-2.5 overflow-hidden">
-              {/* Left Column: Normalized Skills & Interests */}
-              <div className="col-span-6 pr-1.5 border-r border-slate-200/90 flex flex-col justify-between overflow-y-auto no-scrollbar">
-                {/* Skills Block (student_skills <-> skills) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-6 h-6 rounded-lg bg-[#6C2BD9] text-white flex items-center justify-center font-mono text-[10px] font-bold">
-                        &lt;/&gt;
-                      </div>
-                      <span className="text-slate-300 font-light">|</span>
-                      <span className="text-[13px] font-extrabold text-[#12102E]">
-                        Skills
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveModal('add-profile-skill')}
-                      className="px-2 py-0.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] text-[10px] font-extrabold cursor-pointer"
-                    >
-                      + Add
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1">
-                    {myNormalizedSkills.map((sk) => (
-                      <button
-                        key={sk.skill_id}
-                        type="button"
-                        onClick={() => removeStudentSkillById(sk.skill_id)}
-                        title={`Proficiency: ${sk.proficiency} (Tap to remove)`}
-                        className="px-2 py-0.5 rounded-full bg-[#E6DEFF] hover:bg-[#D9CCFF] text-[#4C1D95] text-[10px] font-bold cursor-pointer"
-                      >
-                        {sk.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="my-1.5 border-t border-slate-200/90" />
-
-                {/* Interests Block (student_interests <-> interests) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-6 h-6 rounded-lg bg-[#6C2BD9] text-white flex items-center justify-center">
-                        <Gamepad2 className="w-3.5 h-3.5" />
-                      </div>
-                      <span className="text-slate-300 font-light">|</span>
-                      <span className="text-[13px] font-extrabold text-[#12102E]">
-                        Interests
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveModal('add-profile-interest')}
-                      className="px-2 py-0.5 rounded-full bg-[#E5DCFF] hover:bg-[#D8C9FF] text-[#5B18E5] text-[10px] font-extrabold cursor-pointer"
-                    >
-                      + Add
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1">
-                    {myNormalizedInterests.map((intr) => (
-                      <button
-                        key={intr.interest_id}
-                        type="button"
-                        onClick={() =>
-                          removeStudentInterestById(intr.interest_id)
-                        }
-                        title="Tap to remove interest"
-                        className="px-2 py-0.5 rounded-full bg-[#E6DEFF] hover:bg-[#D9CCFF] text-[#4C1D95] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
-                      >
-                        {intr.name === 'Learning' && (
-                          <BookOpen className="w-2.5 h-2.5" />
+                        <span>{label}</span>
+                        <span className="text-[9.5px] opacity-75 tabular-nums">
+                          ({count})
+                        </span>
+                        {active && (
+                          <motion.div
+                            layoutId="tab-saved-category-underline"
+                            transition={{
+                              type: 'spring',
+                              stiffness: 500,
+                              damping: 34,
+                            }}
+                            className="absolute bottom-0 inset-x-0 h-[2.5px] rounded-full bg-[#5B18E5]"
+                          />
                         )}
-                        <span>{intr.name}</span>
                       </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: History (student_activity_history) */}
-              <div className="col-span-6 flex flex-col min-h-0 relative pr-2">
-                <div className="flex items-start gap-1.5 mb-1.5">
-                  <History className="w-4 h-4 text-[#5B18E5] shrink-0 mt-0.5 stroke-[2.3]" />
-                  <div>
-                    <h3 className="text-[13px] font-extrabold text-[#12102E] leading-none">
-                      History
-                    </h3>
-                    <p className="text-[9px] text-slate-500 font-medium mt-0.5">
-                      Past programs and activities
-                    </p>
-                  </div>
+                    );
+                  })}
                 </div>
 
-                {/* History Items List */}
-                <div className="flex-1 space-y-1.5 overflow-y-auto no-scrollbar pr-0.5">
-                  {myHistoryRecords.map((item) => (
+                {/* Inline Sort Switcher */}
+                <div className="flex items-center gap-1.5 text-[10px] shrink-0 pb-1.5">
+                  <span className="font-bold text-slate-400">Susun:</span>
+                  {[
+                    {id: 'match', label: 'Skor'},
+                    {id: 'newest', label: 'Baru'},
+                    {id: 'hours', label: 'Masa'},
+                  ].map((st) => (
                     <button
-                      key={item.id}
+                      key={st.id}
                       type="button"
-                      onClick={() => {
-                        setSelectedHistoryItem(item);
-                        setActiveModal('history-detail');
-                      }}
-                      className="w-full text-left rounded-xl bg-[#EFEAFF] hover:bg-[#E4DCFF] px-2 py-1.5 flex items-center justify-between gap-1 transition-colors cursor-pointer"
+                      onClick={() =>
+                        setSavedSortBy(st.id as 'match' | 'newest' | 'hours')
+                      }
+                      className={`font-extrabold cursor-pointer transition-colors ${
+                        savedSortBy === st.id
+                          ? 'text-[#5B18E5] underline underline-offset-4'
+                          : 'text-slate-400 hover:text-slate-700'
+                      }`}
                     >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <div className="w-1 h-6 rounded-full bg-[#5B18E5] shrink-0" />
-                        <div className="min-w-0">
-                          <div className="text-[10.5px] font-extrabold text-[#12102E] truncate">
-                            {item.title}
-                          </div>
-                          <div className="text-[9px] text-slate-600 font-medium flex items-center gap-1 mt-0.5">
-                            <Calendar className="w-2.5 h-2.5 text-slate-500 shrink-0" />
-                            <span className="truncate">
-                              {item.date_display}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#12102E] shrink-0" />
+                      {st.label}
                     </button>
                   ))}
                 </div>
-
-                {/* Purple Vertical Scrollbar Track Indicator */}
-                <div className="absolute right-0 top-8 bottom-1 w-1 rounded-full bg-purple-200/70 overflow-hidden pointer-events-none">
-                  <div className="w-full h-1/2 rounded-full bg-[#5B18E5]" />
-                </div>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* =========================================================
-            3. BOTTOM 2-NAVIGATION BAR + FLOATING '+' BUTTON (Hidden on Search, Activity Detail, Post Activity & Side Pages)
-           ========================================================= */}
-        {!isSearchPageOpen &&
-          !isActivityPageOpen &&
-          !isPostActivityPageOpen &&
-          !activeSidePage && (
-            <div className="relative z-20 px-4 pb-3.5 pt-1 flex items-center gap-3">
-              <nav
-                aria-label="Primary Navigation"
-                className="flex-1 h-[52px] bg-[#F5F2FF] rounded-full p-1.5 shadow-[0_10px_28px_rgba(12,2,30,0.5)] border border-white/85 grid grid-cols-2 items-center"
-              >
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('home')}
-                  className={`h-full rounded-full flex items-center justify-center gap-2 text-[14px] transition-all cursor-pointer ${
-                    activeTab === 'home'
-                      ? 'bg-[#E1D4FF] text-[#5515CE] font-extrabold shadow-xs'
-                      : 'text-[#626077] font-semibold hover:text-[#14122E]'
-                  }`}
-                >
-                  <Home
-                    className={`w-5 h-5 ${
-                      activeTab === 'home'
-                        ? 'fill-[#5B18E5] text-[#5B18E5]'
-                        : 'text-[#626077]'
-                    }`}
-                  />
-                  <span>Home</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('profile')}
-                  className={`h-full rounded-full flex items-center justify-center gap-2 text-[14px] transition-all cursor-pointer ${
-                    activeTab === 'profile'
-                      ? 'bg-[#E1D4FF] text-[#5515CE] font-extrabold shadow-xs'
-                      : 'text-[#626077] font-semibold hover:text-[#14122E]'
-                  }`}
-                >
-                  <User
-                    className={`w-5 h-5 ${
-                      activeTab === 'profile'
-                        ? 'fill-[#5B18E5] text-[#5B18E5]'
-                        : 'text-[#626077]'
-                    }`}
-                  />
-                  <span>Profile</span>
-                </button>
-              </nav>
-
-              {/* Circular Purple '+' Button with Glass Halo -> Opens Dedicated Full-Screen Post Activity Page */}
-              <button
-                type="button"
-                onClick={openPostActivityPage}
-                aria-label="Post New Activity or Project"
-                className="w-[54px] h-[54px] rounded-full p-1 bg-white/15 border border-white/50 shadow-[0_8px_25px_rgba(139,92,246,0.65)] flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer shrink-0"
-              >
-                <div className="w-full h-full rounded-full bg-gradient-to-b from-[#9D5CFF] via-[#7B2CBF] to-[#4A0E9E] flex items-center justify-center text-white shadow-inner">
-                  <Plus className="w-7 h-7 stroke-[2.8]" />
+            {/* 2. OPEN EDITORIAL MAGAZINE STREAM (ZERO ROUNDED-SQUARE CARDS) */}
+            {filteredSavedCatalog.length === 0 ? (
+              <div className="py-14 text-center space-y-3">
+                <Bookmark className="w-8 h-8 text-[#5B18E5] mx-auto stroke-[1.8]" />
+                <div className="space-y-1">
+                  <div className="text-sm font-extrabold text-[#141132]">
+                    {savedSearchQuery || savedCategoryFilter !== 'All'
+                      ? 'Tiada Aktiviti Ditemui untuk Penapis Ini'
+                      : 'Belum Ada Aktiviti Disimpan'}
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
+                    {savedSearchQuery || savedCategoryFilter !== 'All'
+                      ? 'Cuba padam kata kunci carian atau pilih kategori lain.'
+                      : 'Swipe kad ke kanan di halaman Home untuk simpan aktiviti menarik terus ke sini!'}
+                  </p>
                 </div>
-              </button>
-            </div>
-          )}
+                <div className="pt-2 flex items-center justify-center gap-3">
+                  {(savedSearchQuery || savedCategoryFilter !== 'All') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSavedSearchQuery('');
+                        setSavedCategoryFilter('All');
+                      }}
+                      className="text-xs font-extrabold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                    >
+                      Reset Penapis
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavedSearchQuery('');
+                      setSavedCategoryFilter('All');
+                      setActiveTab('home');
+                    }}
+                    className="px-5 py-2.5 rounded-full bg-[#5B18E5] hover:bg-[#4C12C2] text-white text-xs font-extrabold cursor-pointer"
+                  >
+                    Teroka Aktiviti di Home
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="divide-y divide-purple-200/75">
+                {filteredSavedCatalog.map((item, idx) => {
+                  const rawDigits = (
+                    item.organizerPhone || '+60128834910'
+                  ).replace(/[^0-9]/g, '');
+                  const normalizedPhone = rawDigits.startsWith('0')
+                    ? `6${rawDigits}`
+                    : rawDigits;
+                  const itemWaUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(
+                    `Salam / Hi ${item.organizerName}, saya ${
+                      currentUser?.display_name || 'Fahrin'
+                    } dari UMS berminat dengan aktiviti "${
+                      item.title
+                    }" di ProjectLink UMS.`
+                  )}`;
+                  const currentNote =
+                    bookmarkNotes[item.id] || 'Prioriti Utama';
+                  const itemGallery = item.projectObj.gallery_images || [];
+
+                  return (
+                    <article
+                      key={item.id}
+                      onClick={() => openCardInfoModal(item.id)}
+                      className="py-5 first:pt-4 group cursor-pointer space-y-3.5 transition-colors"
+                    >
+                      {/* Top Editorial Kicker Row: Index Number + Category + Radial Match + Unsave */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-[10.5px] font-extrabold uppercase tracking-wider">
+                          <span className="text-[#5B18E5] font-display text-xs tabular-nums">
+                            {String(idx + 1).padStart(2, '0')}
+                          </span>
+                          <span className="text-purple-300">/</span>
+                          <span className="text-[#4E14B8]">
+                            {item.projectObj.project_type}
+                          </span>
+                          <span className="text-purple-300">·</span>
+                          <span className="text-slate-500">
+                            {item.facultyLabel1}
+                          </span>
+                          <span className="text-purple-300">·</span>
+                          <span className="text-amber-600">+50 SDP</span>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 shrink-0">
+                          <span className="text-xs font-extrabold font-display text-[#5B18E5] tabular-nums">
+                            {item.matchScore}% Match
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSaveProject(item.id);
+                            }}
+                            title="Buang daripada simpanan"
+                            aria-label={`Unsave ${item.title}`}
+                            className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer p-0.5"
+                          >
+                            <Bookmark className="w-4 h-4 fill-[#5B18E5] text-[#5B18E5] hover:fill-rose-600 hover:text-rose-600" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Main Asymmetric Magazine Split: Left Portrait Visual + Right Editorial Typography */}
+                      <div className="flex gap-4 items-start">
+                        <div className="relative w-[108px] h-[116px] rounded-lg overflow-hidden bg-[#1D0642] shrink-0 shadow-sm">
+                          <ActivityCardBanner
+                            cardId={item.id}
+                            bannerUrl={item.bannerUrl}
+                            bannerPreset={item.bannerPreset}
+                            bannerPositionY={item.bannerPositionY}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
+                          <div className="absolute bottom-2 inset-x-2 flex items-center justify-between text-[9px] font-extrabold text-white">
+                            <span className="truncate">
+                              {item.projectObj.slots_needed || 4} Slot
+                            </span>
+                            <span>
+                              {item.projectObj.min_weekly_hours || 6}j/mgg
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <h3 className="text-[16px] font-extrabold font-display text-[#14122E] group-hover:text-[#5B18E5] transition-colors leading-snug">
+                            {item.title}
+                          </h3>
+
+                          <p className="text-[11.5px] text-slate-600 line-clamp-2 leading-relaxed">
+                            {item.description}
+                          </p>
+
+                          {/* Hairline Logistics Summary (Replaces Purple Box) */}
+                          <div className="pt-1.5 border-t border-purple-100/85 space-y-1 text-[11px]">
+                            <div className="flex items-center gap-1.5 text-slate-700 font-semibold truncate">
+                              <Calendar className="w-3 h-3 text-[#5B18E5] shrink-0" />
+                              <span className="truncate">{item.dateText}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-slate-600 truncate">
+                              <MapPin className="w-3 h-3 text-[#5B18E5] shrink-0" />
+                              <span className="truncate">
+                                {item.locationText} · {item.organizerName}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Inline Hashtag Skill Strip */}
+                      {item.reqSkillNames.length > 0 && (
+                        <div className="flex items-center gap-2.5 flex-wrap text-[10.5px] font-bold text-[#4C1D95]">
+                          {item.reqSkillNames.slice(0, 4).map((sk) => (
+                            <span key={sk}>#{sk}</span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Filmstrip Thumbnail Row for Catalog Images (If Any) */}
+                      {itemGallery.length > 0 && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-0.5"
+                        >
+                          <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0 mr-1">
+                            Lampiran ({itemGallery.length}):
+                          </span>
+                          {itemGallery.map((img, gIdx) => (
+                            <div
+                              key={img.id}
+                              onClick={() => {
+                                setInspectedCardId(item.id);
+                                setLightboxIndex(gIdx);
+                                setLightboxZoom(1);
+                              }}
+                              className="relative w-12 h-9 rounded overflow-hidden bg-[#1D0642] shrink-0 hover:opacity-90 active:scale-95 transition-all cursor-pointer"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={img.url}
+                                alt={img.caption || item.title}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Bottom Bar: Minimalist Dot-Note Selector + Editorial Action Links */}
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="pt-1 flex flex-wrap items-center justify-between gap-2 text-[10.5px]"
+                      >
+                        <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar">
+                          {[
+                            'Prioriti Utama',
+                            'Ajak Kawan FKI',
+                            'Tanya Penganjur',
+                            'Bincang Jadual',
+                          ].map((lbl) => {
+                            const isSelected = currentNote === lbl;
+                            return (
+                              <button
+                                key={lbl}
+                                type="button"
+                                onClick={() =>
+                                  setBookmarkNotes((prev) => ({
+                                    ...prev,
+                                    [item.id]: lbl,
+                                  }))
+                                }
+                                className={`font-extrabold whitespace-nowrap cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'text-[#5B18E5] underline underline-offset-4'
+                                    : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                              >
+                                {isSelected ? `● ${lbl}` : lbl}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0 ml-auto">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openCardInfoModal(item.id);
+                            }}
+                            className="text-[11px] font-extrabold text-[#5B18E5] hover:underline flex items-center gap-0.5 cursor-pointer"
+                          >
+                            <span>Lihat Lembaran</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+
+                          <a
+                            href={itemWaUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              notifyToast(
+                                'Membuka WhatsApp',
+                                `Menghubungi ${item.organizerName} (${item.organizerPhone})...`,
+                                'success'
+                              );
+                            }}
+                            className="h-8 px-3.5 rounded-full bg-[#16A34A] hover:bg-[#15803D] text-white text-[11px] font-extrabold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition-colors"
+                          >
+                            <MessageCircle className="w-3 h-3 fill-current" />
+                            <span>WhatsApp</span>
+                          </a>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+        </AnimatePresence>
 
         {/* =========================================================
-            4. SIDE MENU DRAWER (Streamlined & Connected to Full-Screen Pages)
+            3. BOTTOM 2-NAVIGATION BAR + FLOATING '+' BUTTON (With Shared layoutId Active Capsule)
            ========================================================= */}
-        {isSidebarOpen && (
-          <div
-            className="absolute inset-0 z-50 bg-[#12042E]/45 backdrop-blur-[2px] flex"
-            onClick={() => setIsSidebarOpen(false)}
-          >
-            <aside
-              className="w-[82%] max-w-[326px] h-full bg-white rounded-r-[32px] shadow-[12px_0_40px_rgba(15,3,38,0.45)] flex flex-col justify-between p-5 text-[#14122E]"
-              onClick={(e) => e.stopPropagation()}
+        <AnimatePresence initial={false}>
+          {!isSearchPageOpen &&
+            !isActivityPageOpen &&
+            !isPostActivityPageOpen &&
+            !activeSidePage && (
+              <motion.div
+                key="shared-bottom-nav-bar"
+                initial={{opacity: 0, y: 20}}
+                animate={{opacity: 1, y: 0}}
+                exit={{opacity: 0, y: 20}}
+                transition={{type: 'spring', stiffness: 400, damping: 34}}
+                className={
+                  activeTab === 'activity'
+                    ? 'absolute bottom-0 inset-x-0 z-30 pointer-events-none px-4 pb-3.5 pt-6 flex items-center gap-3 bg-gradient-to-t from-[#FAF9FF] via-[#FAF9FF]/92 to-transparent'
+                    : 'relative z-20 px-4 pb-3.5 pt-1 flex items-center gap-3'
+                }
+              >
+                <nav
+                  aria-label="Primary Navigation"
+                  className={`pointer-events-auto flex-1 h-[52px] rounded-full p-1.5 grid grid-cols-2 items-center transition-shadow ${
+                    activeTab === 'activity'
+                      ? 'bg-white/95 backdrop-blur-xl shadow-[0_10px_28px_rgba(32,12,82,0.18)] border border-purple-200/85'
+                      : 'bg-[#F5F2FF] shadow-[0_10px_28px_rgba(12,2,30,0.5)] border border-white/85'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('home')}
+                    className={`relative h-full rounded-full flex items-center justify-center gap-2 text-[14px] transition-colors cursor-pointer ${
+                      activeTab === 'home'
+                        ? 'text-[#5515CE] font-extrabold'
+                        : 'text-[#626077] font-semibold hover:text-[#14122E]'
+                    }`}
+                  >
+                    {activeTab === 'home' && (
+                      <motion.span
+                        layoutId="bottom-nav-active-pill"
+                        transition={{
+                          type: 'spring',
+                          stiffness: 440,
+                          damping: 34,
+                        }}
+                        className="absolute inset-0 rounded-full bg-[#E1D4FF] shadow-xs"
+                      />
+                    )}
+                    <span className="relative z-10 flex items-center gap-2">
+                      <Home
+                        className={`w-5 h-5 ${
+                          activeTab === 'home'
+                            ? 'fill-[#5B18E5] text-[#5B18E5]'
+                            : 'text-[#626077]'
+                        }`}
+                      />
+                      <span>Home</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('activity');
+                      setActiveSidePage(null);
+                    }}
+                    className={`relative h-full rounded-full flex items-center justify-center gap-2 text-[14px] transition-colors cursor-pointer ${
+                      activeTab === 'activity'
+                        ? 'text-[#5515CE] font-extrabold'
+                        : 'text-[#626077] font-semibold hover:text-[#14122E]'
+                    }`}
+                  >
+                    {activeTab === 'activity' && (
+                      <motion.span
+                        layoutId="bottom-nav-active-pill"
+                        transition={{
+                          type: 'spring',
+                          stiffness: 440,
+                          damping: 34,
+                        }}
+                        className="absolute inset-0 rounded-full bg-[#E1D4FF] shadow-xs"
+                      />
+                    )}
+                    <span className="relative z-10 flex items-center gap-2">
+                      <div className="relative flex items-center">
+                        <Bookmark
+                          className={`w-5 h-5 ${
+                            activeTab === 'activity'
+                              ? 'fill-[#5B18E5] text-[#5B18E5]'
+                              : 'text-[#626077]'
+                          }`}
+                        />
+                        {searchCategoryCounts.Saved > 0 && (
+                          <span className="absolute -top-1 -right-2.5 min-w-[15px] h-[15px] px-1 rounded-full bg-[#5B18E5] text-white text-[8.5px] font-extrabold flex items-center justify-center tabular-nums">
+                            {searchCategoryCounts.Saved}
+                          </span>
+                        )}
+                      </div>
+                      <span>Activity</span>
+                    </span>
+                  </button>
+                </nav>
+
+                {/* Circular Purple '+' Button with Glass Halo -> Opens Dedicated Full-Screen Post Activity Page */}
+                <button
+                  type="button"
+                  onClick={openPostActivityPage}
+                  aria-label="Post New Activity or Project"
+                  className={`pointer-events-auto w-[54px] h-[54px] rounded-full p-1 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer shrink-0 ${
+                    activeTab === 'activity'
+                      ? 'bg-[#EFE9FF] border border-purple-300/80 shadow-[0_8px_22px_rgba(91,24,229,0.3)]'
+                      : 'bg-white/15 border border-white/50 shadow-[0_8px_25px_rgba(139,92,246,0.65)]'
+                  }`}
+                >
+                  <div className="w-full h-full rounded-full bg-gradient-to-b from-[#9D5CFF] via-[#7B2CBF] to-[#4A0E9E] flex items-center justify-center text-white shadow-inner">
+                    <Plus className="w-7 h-7 stroke-[2.8]" />
+                  </div>
+                </button>
+              </motion.div>
+            )}
+        </AnimatePresence>
+
+        {/* =========================================================
+            4. SIDE MENU DRAWER (Spring Slide-In/Out + Backdrop Blur + Staggered Menu Items)
+           ========================================================= */}
+        <AnimatePresence>
+          {isSidebarOpen && (
+            <motion.div
+              key="side-menu-backdrop"
+              initial={{opacity: 0}}
+              animate={{opacity: 1}}
+              exit={{opacity: 0}}
+              transition={{duration: 0.22}}
+              className="absolute inset-0 z-50 bg-[#12042E]/50 backdrop-blur-[3px] flex"
+              onClick={() => setIsSidebarOpen(false)}
             >
+              <motion.aside
+                key="side-menu-drawer"
+                initial={{x: '-104%'}}
+                animate={{x: 0}}
+                exit={{x: '-104%'}}
+                transition={{type: 'spring', stiffness: 380, damping: 34}}
+                className="w-[82%] max-w-[326px] h-full bg-white rounded-r-[32px] shadow-[12px_0_40px_rgba(15,3,38,0.45)] flex flex-col justify-between p-5 text-[#14122E]"
+                onClick={(e) => e.stopPropagation()}
+              >
               <div>
                 {/* Top Window Dots + Close Button */}
                 <div className="flex items-center justify-between mb-3">
@@ -6428,38 +9887,33 @@ export function MainMobileAppInterface() {
                 {/* Brand Row inside Sidebar */}
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsSidebarOpen(false);
-                        setActiveModal('app-icon-settings');
-                      }}
-                      title="Tukar Imej Ikon Aplikasi"
-                      className="relative w-10 h-10 rounded-2xl bg-[#F0E9FF] hover:bg-[#E4D7FF] flex items-center justify-center transition-colors cursor-pointer group"
-                    >
+                    <div className="relative w-10 h-10 rounded-2xl bg-[#F0E9FF] flex items-center justify-center">
                       <ProjectLinkPLogo
                         src={appIconUrl}
                         className="w-7 h-7 rounded-md"
                       />
-                      <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#5B18E5] text-white flex items-center justify-center shadow-xs">
-                        <Camera className="w-2.5 h-2.5" />
-                      </span>
-                    </button>
+                    </div>
                     <div>
                       <div className="text-[16px] font-extrabold font-display tracking-tight leading-tight">
                         <span className="text-[#14122E]">ProjectLink </span>
                         <span className="text-[#5B18E5]">UMS</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsSidebarOpen(false);
-                          setActiveModal('app-icon-settings');
-                        }}
-                        className="text-[10px] font-bold text-[#6315EA] hover:underline cursor-pointer"
-                      >
-                        Tukar Ikon Aplikasi
-                      </button>
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsSidebarOpen(false);
+                            setActiveModal('app-icon-settings');
+                          }}
+                          className="text-[10px] font-bold text-[#6315EA] hover:underline cursor-pointer"
+                        >
+                          Tukar Ikon Aplikasi (Admin)
+                        </button>
+                      ) : (
+                        <div className="text-[10px] font-semibold text-slate-400">
+                          Portal Aktiviti Pelajar UMS
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button
@@ -6477,43 +9931,7 @@ export function MainMobileAppInterface() {
                   </button>
                 </div>
 
-                {/* STUDENT / ORGANIZER Segmented Toggle */}
-                <div className="rounded-xl border border-slate-200 p-1 grid grid-cols-2 bg-white mb-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      updateProfileMetadata({role_mode: 'STUDENT'});
-                      setIsSidebarOpen(false);
-                    }}
-                    className={`py-2 rounded-lg text-[10.5px] font-extrabold tracking-wider uppercase transition-all cursor-pointer ${
-                      sidebarRole === 'STUDENT'
-                        ? 'bg-[#5B18E5] text-white shadow-xs'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    STUDENT
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      updateProfileMetadata({role_mode: 'ORGANIZER'});
-                      setActiveSidebarItem('Settings');
-                      setIsSidebarOpen(false);
-                      setIsSearchPageOpen(false);
-                      setIsActivityPageOpen(false);
-                      setActiveSidePage('settings');
-                    }}
-                    className={`py-2 rounded-lg text-[10.5px] font-extrabold tracking-wider uppercase transition-all cursor-pointer ${
-                      sidebarRole === 'ORGANIZER'
-                        ? 'bg-[#5B18E5] text-white shadow-xs'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    ORGANIZER
-                  </button>
-                </div>
-
-                {/* Primary Menu List (Streamlined: Discover, My Activities, Saved Activities, Calendar) */}
+                {/* Primary Menu List (Clean User Navigation — No Student/Organizer Toggle) */}
                 <div className="space-y-1">
                   {[
                     {
@@ -6550,10 +9968,23 @@ export function MainMobileAppInterface() {
                         ).length
                       }`,
                       action: () => {
-                        setActiveSidebarItem('Saved Activities');
+                        setActiveSidebarItem('Discover');
                         setIsSearchPageOpen(false);
                         setIsActivityPageOpen(false);
-                        setActiveSidePage('saved-activities');
+                        setActiveTab('activity');
+                        setActiveSidePage(null);
+                        setIsSidebarOpen(false);
+                      },
+                    },
+                    {
+                      label: 'History',
+                      icon: History,
+                      badge: `${myHistoryRecords.length}`,
+                      action: () => {
+                        setActiveSidebarItem('History');
+                        setIsSearchPageOpen(false);
+                        setIsActivityPageOpen(false);
+                        setActiveSidePage('history');
                         setIsSidebarOpen(false);
                       },
                     },
@@ -6569,12 +10000,20 @@ export function MainMobileAppInterface() {
                         setIsSidebarOpen(false);
                       },
                     },
-                  ].map(({label, icon: Icon, badge, action}) => {
+                  ].map(({label, icon: Icon, badge, action}, itemIdx) => {
                     const isActive = activeSidebarItem === label;
                     return (
-                      <button
+                      <motion.button
                         key={label}
                         type="button"
+                        initial={{opacity: 0, x: -16}}
+                        animate={{opacity: 1, x: 0}}
+                        transition={{
+                          type: 'spring',
+                          stiffness: 400,
+                          damping: 32,
+                          delay: 0.04 + itemIdx * 0.035,
+                        }}
                         onClick={action}
                         className={`w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-[13px] transition-colors cursor-pointer ${
                           isActive
@@ -6595,12 +10034,12 @@ export function MainMobileAppInterface() {
                             {badge}
                           </span>
                         )}
-                      </button>
+                      </motion.button>
                     );
                   })}
                 </div>
 
-                {/* Divider + ACCOUNT Section (Notifications & Settings only) */}
+                {/* Divider + ACCOUNT Section (Notifications, Settings, and Admin Panel only if role === 'admin') */}
                 <div className="my-3 border-t border-slate-100" />
 
                 <div>
@@ -6627,7 +10066,7 @@ export function MainMobileAppInterface() {
                         <Bell className="w-4 h-4 text-slate-500" />
                         <span>Notifications</span>
                       </span>
-                      <span className="px-2 py-0.5 rounded-full bg-[#D9F99D] text-[#365314] text-[10.5px] font-extrabold tabular-nums">
+                      <span className="text-[11px] font-extrabold text-[#5B18E5] tabular-nums">
                         {unreadCount}
                       </span>
                     </button>
@@ -6650,6 +10089,41 @@ export function MainMobileAppInterface() {
                       <SlidersHorizontal className="w-4 h-4 text-slate-500" />
                       <span>Settings</span>
                     </button>
+
+                    {/* Exclusive Admin Panel Tab — Shown ONLY when logged in as Admin (fahrinmuneer3@gmail.com) */}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveSidebarItem('Admin Panel');
+                          setIsSearchPageOpen(false);
+                          setIsActivityPageOpen(false);
+                          setActiveSidePage('admin-panel');
+                          setIsSidebarOpen(false);
+                        }}
+                        className={`w-full px-3.5 py-2.5 rounded-xl flex items-center justify-between text-[13px] transition-colors cursor-pointer ${
+                          activeSidebarItem === 'Admin Panel'
+                            ? 'bg-[#141132] text-white font-extrabold'
+                            : 'bg-[#F5F0FF] text-[#5B18E5] font-bold hover:bg-[#EBE0FF]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-3">
+                          <ShieldCheck
+                            className={`w-4 h-4 ${
+                              activeSidebarItem === 'Admin Panel'
+                                ? 'text-emerald-300'
+                                : 'text-[#5B18E5]'
+                            }`}
+                          />
+                          <span>Admin Panel</span>
+                        </span>
+                        <span className="text-[11px] font-extrabold tabular-nums">
+                          {openReportsCount > 0
+                            ? `${openReportsCount} laporan`
+                            : `${projects.length}`}
+                        </span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -6659,10 +10133,9 @@ export function MainMobileAppInterface() {
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveSidePage(null);
+                    setActiveSidePage('profile');
                     setIsSearchPageOpen(false);
                     setIsActivityPageOpen(false);
-                    setActiveTab('profile');
                     setIsSidebarOpen(false);
                   }}
                   className="w-full p-2.5 rounded-2xl border border-slate-200 hover:border-purple-300 bg-white flex items-center justify-between transition-colors cursor-pointer"
@@ -6678,11 +10151,18 @@ export function MainMobileAppInterface() {
                       />
                     </div>
                     <div className="text-left min-w-0">
-                      <div className="text-[12.5px] font-extrabold text-slate-900 leading-tight truncate">
-                        {currentUser?.display_name || 'My Profile'}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[12.5px] font-extrabold text-slate-900 leading-tight truncate">
+                          {currentUser?.display_name || 'My Profile'}
+                        </span>
+                        {isAdmin && (
+                          <span className="text-[9.5px] font-extrabold text-[#5B18E5] shrink-0">
+                            · Admin
+                          </span>
+                        )}
                       </div>
                       <div className="text-[10.5px] text-slate-400 truncate">
-                        {currentUser?.email || 'UMS student account'}
+                        {currentUser?.email || 'UMS account'}
                       </div>
                     </div>
                   </div>
@@ -6698,24 +10178,36 @@ export function MainMobileAppInterface() {
                   <span>Log Keluar (Sign Out)</span>
                 </button>
               </div>
-            </aside>
-          </div>
-        )}
+              </motion.aside>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* =========================================================
-            5. CONTEXTUAL MODALS (100% Connected to Relational Backend)
+            5. CONTEXTUAL MODALS (Animated Spring Sheet & Backdrop Blur)
            ========================================================= */}
-        {activeModal && (
-          <div
-            className="absolute inset-0 z-50 bg-[#100326]/70 backdrop-blur-xs flex items-end sm:items-center justify-center p-4"
-            onClick={() => setActiveModal(null)}
-          >
-            <div
-              className="w-full max-h-[84%] bg-white rounded-[28px] p-5 text-[#14122E] shadow-2xl overflow-y-auto space-y-4"
-              onClick={(e) => e.stopPropagation()}
+        <AnimatePresence>
+          {activeModal && (
+            <motion.div
+              key={`modal-backdrop-${activeModal}`}
+              initial={{opacity: 0}}
+              animate={{opacity: 1}}
+              exit={{opacity: 0}}
+              transition={{duration: 0.2}}
+              className="absolute inset-0 z-50 bg-[#100326]/70 backdrop-blur-xs flex items-end sm:items-center justify-center p-4"
+              onClick={() => setActiveModal(null)}
             >
+              <motion.div
+                key={`modal-sheet-${activeModal}`}
+                initial={{opacity: 0, y: 36, scale: 0.96}}
+                animate={{opacity: 1, y: 0, scale: 1}}
+                exit={{opacity: 0, y: 28, scale: 0.96}}
+                transition={{type: 'spring', stiffness: 400, damping: 34}}
+                className="w-full max-h-[84%] bg-white rounded-[28px] p-5 text-[#14122E] shadow-2xl overflow-y-auto space-y-4"
+                onClick={(e) => e.stopPropagation()}
+              >
               {/* MODAL: ACTIVITY INFO, WHATSAPP DIRECT CONTACT & MATCH DETAILS */}
-              {activeModal === 'match-details' && (
+              {activeModal === 'match-details' && modalCard && (
                 <>
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -6854,7 +10346,7 @@ export function MainMobileAppInterface() {
                       <div
                         key={project.id}
                         className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
-                          project.id === currentCard.id
+                          project.id === currentCard?.id
                             ? 'bg-[#F4EFFF] border-[#6215E5]'
                             : 'bg-white border-slate-200'
                         }`}
@@ -6883,12 +10375,12 @@ export function MainMobileAppInterface() {
                 </>
               )}
 
-              {/* MODAL: ADD HOME SKILL FILTER */}
+              {/* MODAL: ADD HOME SKILL FILTER (OFFICIAL PREDETERMINED TAXONOMY) */}
               {activeModal === 'add-home-skill' && (
                 <>
                   <div className="flex items-center justify-between">
                     <h3 className="text-base font-extrabold font-display">
-                      Urus Penapis Kemahiran (Home)
+                      Penapis Rasmi Bidang &amp; Kemahiran UMS
                     </h3>
                     <button
                       type="button"
@@ -6899,39 +10391,109 @@ export function MainMobileAppInterface() {
                     </button>
                   </div>
                   <p className="text-xs text-slate-600">
-                    Pilih penapis kemahiran untuk mengira semula skor{' '}
-                    <strong>Matches Potential</strong> secara langsung:
+                    Pilih penapis rasmi merentasi semua fakulti UMS untuk
+                    menyusun kad <strong>Home</strong> dan mengira semula skor{' '}
+                    <strong>Matches Potential</strong>:
                   </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      'Programming',
-                      'Planning',
-                      'Database',
-                      'Extrovert',
-                      'Female only',
-                      'UI/UX Design',
-                      'Python',
-                      'React',
-                      'Next.js',
-                      'Figma',
-                      'Data Analysis',
-                    ].map((tagItem) => {
-                      const added = selectedTags.includes(tagItem);
+
+                  <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="search"
+                      value={homeFilterQuery}
+                      onChange={(e) => setHomeFilterQuery(e.target.value)}
+                      placeholder="Cari penapis rasmi..."
+                      className="flex-1 rounded-xl border border-slate-200 px-3 py-1.5 text-xs focus:outline-none focus:border-[#6215E5]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHomeStrictFilterMode((prev) => !prev);
+                        setCardIndex(0);
+                      }}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer whitespace-nowrap ${
+                        homeStrictFilterMode
+                          ? 'bg-[#141132] text-white'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {homeStrictFilterMode ? 'Tapis Ketat: ON' : 'Susun Skor'}
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 max-h-[46vh] overflow-y-auto pr-0.5">
+                    {(
+                      [
+                        'Kemahiran & Bidang',
+                        'Gaya Kerja & Pasukan',
+                      ] as const
+                    ).map((grp) => {
+                      const items = OFFICIAL_FILTER_TAGS.filter(
+                        (item) =>
+                          item.group === grp &&
+                          (!homeFilterQuery.trim() ||
+                            item.label
+                              .toLowerCase()
+                              .includes(homeFilterQuery.trim().toLowerCase()))
+                      );
+                      if (items.length === 0) return null;
                       return (
-                        <button
-                          key={tagItem}
-                          type="button"
-                          onClick={() => toggleFilterTag(tagItem)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer ${
-                            added
-                              ? 'bg-[#6215E5] text-white'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                          }`}
-                        >
-                          {added ? `✓ ${tagItem}` : `+ ${tagItem}`}
-                        </button>
+                        <div key={grp} className="space-y-1.5">
+                          <div className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                            {grp}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {items.map((tagObj) => {
+                              const added = selectedTags.includes(tagObj.label);
+                              return (
+                                <button
+                                  key={tagObj.id}
+                                  type="button"
+                                  onClick={() =>
+                                    handleToggleHomeFilter(tagObj.label)
+                                  }
+                                  className={`px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
+                                    added
+                                      ? 'bg-[#6215E5] text-white'
+                                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {added
+                                    ? `✓ ${tagObj.label}`
+                                    : `+ ${tagObj.label}`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       );
                     })}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-slate-500 tabular-nums">
+                      {selectedTags.length} penapis aktif
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {selectedTags.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            selectedTags.forEach((t) => toggleFilterTag(t));
+                            setCardIndex(0);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer"
+                        >
+                          Kosongkan
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal(null)}
+                        className="px-4 py-1.5 rounded-xl bg-[#6215E5] text-white text-xs font-bold cursor-pointer"
+                      >
+                        Selesai
+                      </button>
+                    </div>
                   </div>
                 </>
               )}
@@ -6970,24 +10532,13 @@ export function MainMobileAppInterface() {
                         p_audience: 'Terbuka kepada semua pelajar UMS',
                         p_badge_line_1: 'Program',
                         p_badge_line_2: newType,
-                        p_tags: ['Tech', 'Networking', newType],
+                        p_tags: ['AI & Tech', 'Networking', newType],
                         p_organizer_phone: newOrganizerPhone.trim(),
                         p_organizer_name: `${
-                          currentUser?.display_name || 'Fahrin'
+                          currentUser?.display_name || 'Fahrin Muneer'
                         } (${currentUser?.faculty_short || 'FKI'})`,
-                        p_required_skills: [
-                          {
-                            skill_id: 'sk-web',
-                            mandatory: true,
-                            importance: 5,
-                          },
-                          {
-                            skill_id: 'sk-14',
-                            mandatory: false,
-                            importance: 4,
-                          },
-                        ],
-                        p_interests: ['in-01', 'in-collab'],
+                        p_required_skills: [],
+                        p_interests: [],
                         p_meeting_slots: [
                           {
                             weekday: 3,
@@ -7716,6 +11267,212 @@ export function MainMobileAppInterface() {
                 </>
               )}
 
+              {/* MODAL: AUTHOR-ONLY EDIT ACTIVITY INFO & DETAILS */}
+              {activeModal === 'edit-project-info' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#5B18E5]">
+                        Kawalan Pencipta (Author Only)
+                      </div>
+                      <h3 className="text-base font-extrabold font-display">
+                        Sunting Maklumat Aktiviti
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveModal(null)}
+                      className="p-1.5 rounded-full bg-slate-100 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5 text-xs">
+                    <div>
+                      <label className="block font-bold mb-1">
+                        Tajuk Aktiviti / Projek *
+                      </label>
+                      <input
+                        type="text"
+                        value={editInfoTitle}
+                        onChange={(e) => setEditInfoTitle(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-bold mb-1">Kategori</label>
+                        <select
+                          value={editInfoType}
+                          onChange={(e) =>
+                            setEditInfoType(e.target.value as ProjectType)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-2.5 py-2 font-semibold bg-white"
+                        >
+                          <option value="Competition">Competition</option>
+                          <option value="Innovation">Innovation</option>
+                          <option value="Community">Community</option>
+                          <option value="Assignment">Assignment</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-bold mb-1">
+                          Status Siaran
+                        </label>
+                        <select
+                          value={editInfoStatus}
+                          onChange={(e) =>
+                            setEditInfoStatus(e.target.value as ProjectStatus)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-2.5 py-2 font-semibold bg-white"
+                        >
+                          <option value="open">Open (Dibuka)</option>
+                          <option value="closed">Closed (Ditutup)</option>
+                          <option value="completed">Completed (Selesai)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-bold mb-1">
+                          Tarikh Program
+                        </label>
+                        <input
+                          type="text"
+                          value={editInfoDateText}
+                          onChange={(e) => setEditInfoDateText(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold mb-1">
+                          Lokasi Kampus
+                        </label>
+                        <input
+                          type="text"
+                          value={editInfoLocation}
+                          onChange={(e) => setEditInfoLocation(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">
+                        Sasaran Penyertaan Pelajar
+                      </label>
+                      <input
+                        type="text"
+                        value={editInfoAudience}
+                        onChange={(e) => setEditInfoAudience(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-bold mb-1">
+                          Kekosongan Ahli
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={editInfoSlots}
+                          onChange={(e) =>
+                            setEditInfoSlots(Number(e.target.value) || 1)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold mb-1">
+                          Komitmen (Jam/Minggu)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={40}
+                          value={editInfoHours}
+                          onChange={(e) =>
+                            setEditInfoHours(Number(e.target.value) || 1)
+                          }
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block font-bold mb-1">
+                          Nama Penganjur
+                        </label>
+                        <input
+                          type="text"
+                          value={editInfoOrgName}
+                          onChange={(e) => setEditInfoOrgName(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold mb-1 text-emerald-700">
+                          No. WhatsApp *
+                        </label>
+                        <input
+                          type="tel"
+                          value={editInfoOrgPhone}
+                          onChange={(e) => setEditInfoOrgPhone(e.target.value)}
+                          className="w-full rounded-xl border border-emerald-400 bg-emerald-50/40 px-3 py-2 font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">
+                        Penerangan Terperinci &amp; Objektif
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={editInfoDesc}
+                        onChange={(e) => setEditInfoDesc(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const saved = updateProjectDetails(
+                          editingInfoProjectId,
+                          {
+                            title: editInfoTitle,
+                            project_type: editInfoType,
+                            status: editInfoStatus,
+                            date_display: editInfoDateText,
+                            location: editInfoLocation,
+                            audience: editInfoAudience,
+                            slots_needed: editInfoSlots,
+                            min_weekly_hours: editInfoHours,
+                            organizer_name: editInfoOrgName,
+                            organizer_phone: editInfoOrgPhone,
+                            description: editInfoDesc,
+                          }
+                        );
+                        if (saved) {
+                          setActiveModal(null);
+                        }
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-[#5B18E5] hover:bg-[#4C11C4] text-white font-extrabold cursor-pointer"
+                    >
+                      Simpan Perubahan Maklumat
+                    </button>
+                  </div>
+                </>
+              )}
+
               {/* MODAL: EDIT ABOUT ME */}
               {activeModal === 'edit-about' && (
                 <>
@@ -7750,13 +11507,19 @@ export function MainMobileAppInterface() {
                 </>
               )}
 
-              {/* MODAL: ADD PROFILE SKILL (Inserts into student_skills) */}
+              {/* MODAL: ADD PROFILE SKILL (OFFICIAL PREDETERMINED CATALOG ONLY) */}
               {activeModal === 'add-profile-skill' && (
                 <>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-base font-extrabold font-display">
-                      Tambah Kemahiran (student_skills)
-                    </h3>
+                    <div>
+                      <h3 className="text-base font-extrabold font-display">
+                        Pilih Kemahiran Rasmi UMS
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Pilih daripada katalog rasmi mengikut bidang &amp; tahap
+                        kemahiran anda.
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setActiveModal(null)}
@@ -7765,77 +11528,139 @@ export function MainMobileAppInterface() {
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+
                   <div className="space-y-2.5 text-xs">
                     <div className="flex gap-2">
                       <input
-                        type="text"
-                        value={newSkillInput}
-                        onChange={(e) => setNewSkillInput(e.target.value)}
-                        placeholder="cth. TypeScript, Flutter, SQL, Figma..."
-                        className="flex-1 rounded-xl border border-slate-300 px-3 py-2"
+                        type="search"
+                        value={skillPickerQuery}
+                        onChange={(e) => setSkillPickerQuery(e.target.value)}
+                        placeholder="Cari dalam senarai kemahiran rasmi..."
+                        className="flex-1 rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:border-[#6215E5]"
                       />
                       <select
                         value={newSkillProf}
                         onChange={(e) =>
                           setNewSkillProf(e.target.value as Proficiency)
                         }
-                        className="rounded-xl border border-slate-300 px-2.5 py-2"
+                        aria-label="Tahap kemahiran"
+                        className="rounded-xl border border-slate-300 px-2.5 py-2 font-semibold"
                       >
                         <option value="beginner">Beginner</option>
                         <option value="intermediate">Intermediate</option>
                         <option value="advanced">Advanced</option>
                       </select>
                     </div>
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {skills
-                        .filter(
-                          (s) =>
-                            !myNormalizedSkills.some(
-                              (ms) => ms.skill_id === s.id
-                            )
-                        )
-                        .slice(0, 8)
-                        .map((s) => (
+
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                      {['Semua', ...SKILL_CATEGORIES].map((cat) => {
+                        const active = skillPickerCategory === cat;
+                        return (
                           <button
-                            key={s.id}
+                            key={`modal-sk-cat-${cat}`}
                             type="button"
-                            onClick={() => {
-                              addStudentSkillByName(s.name, newSkillProf);
-                              setActiveModal(null);
-                            }}
-                            className="px-2.5 py-1 rounded-full bg-[#EFE9FF] text-[#5B18E5] font-bold cursor-pointer"
+                            onClick={() => setSkillPickerCategory(cat)}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap cursor-pointer ${
+                              active
+                                ? 'bg-[#6215E5] text-white'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
                           >
-                            + {s.name}
+                            {cat}
                           </button>
-                        ))}
+                        );
+                      })}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (newSkillInput.trim()) {
-                          addStudentSkillByName(
-                            newSkillInput.trim(),
-                            newSkillProf
-                          );
-                          setNewSkillInput('');
-                          setActiveModal(null);
-                        }
-                      }}
-                      className="w-full py-2.5 rounded-xl bg-[#6215E5] text-white font-bold cursor-pointer"
-                    >
-                      Tambah ke Profil
-                    </button>
+
+                    <div className="space-y-2.5 max-h-[44vh] overflow-y-auto pr-0.5">
+                      {SKILL_CATEGORIES.filter(
+                        (cat) =>
+                          skillPickerCategory === 'Semua' ||
+                          skillPickerCategory === cat
+                      ).map((cat) => {
+                        const catSkills = skills.filter(
+                          (s) =>
+                            s.category === cat &&
+                            (!skillPickerQuery.trim() ||
+                              s.name
+                                .toLowerCase()
+                                .includes(
+                                  skillPickerQuery.trim().toLowerCase()
+                                ))
+                        );
+                        if (catSkills.length === 0) return null;
+                        return (
+                          <div key={`grp-${cat}`} className="space-y-1.5">
+                            <div className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                              {cat}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {catSkills.map((s) => {
+                                const existing = myNormalizedSkills.find(
+                                  (ms) => ms.skill_id === s.id
+                                );
+                                return (
+                                  <button
+                                    key={s.id}
+                                    type="button"
+                                    onClick={() => {
+                                      if (existing) {
+                                        removeStudentSkillById(s.id);
+                                      } else {
+                                        addStudentSkillByName(
+                                          s.name,
+                                          newSkillProf
+                                        );
+                                      }
+                                    }}
+                                    className={`px-2.5 py-1 rounded-full font-bold cursor-pointer transition-colors ${
+                                      existing
+                                        ? 'bg-[#6215E5] text-white'
+                                        : 'bg-[#EFE9FF] text-[#5B18E5] hover:bg-[#E1D6FF]'
+                                    }`}
+                                  >
+                                    {existing
+                                      ? `✓ ${s.name} (${existing.proficiency})`
+                                      : `+ ${s.name}`}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-500 tabular-nums">
+                        {myNormalizedSkills.length} kemahiran dipilih dalam
+                        profil
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveModal(null)}
+                        className="px-4 py-2 rounded-xl bg-[#6215E5] text-white font-bold cursor-pointer"
+                      >
+                        Selesai
+                      </button>
+                    </div>
                   </div>
                 </>
               )}
 
-              {/* MODAL: ADD PROFILE INTEREST (Inserts into student_interests) */}
+              {/* MODAL: ADD PROFILE INTEREST (OFFICIAL PREDETERMINED MINAT CATALOG ONLY) */}
               {activeModal === 'add-profile-interest' && (
                 <>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-base font-extrabold font-display">
-                      Tambah Minat (student_interests)
-                    </h3>
+                    <div>
+                      <h3 className="text-base font-extrabold font-display">
+                        Pilih Minat Rasmi (Minat &amp; Topik UMS)
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Pilih minat daripada kluster rasmi UMS untuk ketepatan
+                        padanan aktiviti.
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setActiveModal(null)}
@@ -7844,51 +11669,102 @@ export function MainMobileAppInterface() {
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+
                   <div className="space-y-2.5 text-xs">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={newInterestInput}
-                        onChange={(e) => setNewInterestInput(e.target.value)}
-                        placeholder="cth. Hackathon, Artificial Intelligence..."
-                        className="flex-1 rounded-xl border border-slate-300 px-3 py-2"
-                      />
+                    <input
+                      type="search"
+                      value={interestPickerQuery}
+                      onChange={(e) => setInterestPickerQuery(e.target.value)}
+                      placeholder="Cari dalam senarai minat rasmi..."
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:border-[#6215E5]"
+                    />
+
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                      {['Semua', ...INTEREST_CATEGORIES].map((cat) => {
+                        const active = interestPickerCategory === cat;
+                        return (
+                          <button
+                            key={`modal-in-cat-${cat}`}
+                            type="button"
+                            onClick={() => setInterestPickerCategory(cat)}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap cursor-pointer ${
+                              active
+                                ? 'bg-[#6215E5] text-white'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {cat}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="space-y-2.5 max-h-[44vh] overflow-y-auto pr-0.5">
+                      {INTEREST_CATEGORIES.filter(
+                        (cat) =>
+                          interestPickerCategory === 'Semua' ||
+                          interestPickerCategory === cat
+                      ).map((cat) => {
+                        const catInterests = interests.filter(
+                          (i) =>
+                            i.category === cat &&
+                            (!interestPickerQuery.trim() ||
+                              i.name
+                                .toLowerCase()
+                                .includes(
+                                  interestPickerQuery.trim().toLowerCase()
+                                ))
+                        );
+                        if (catInterests.length === 0) return null;
+                        return (
+                          <div key={`intr-grp-${cat}`} className="space-y-1.5">
+                            <div className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                              {cat}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {catInterests.map((i) => {
+                                const isAdded = myNormalizedInterests.some(
+                                  (mi) => mi.interest_id === i.id
+                                );
+                                return (
+                                  <button
+                                    key={i.id}
+                                    type="button"
+                                    onClick={() => {
+                                      if (isAdded) {
+                                        removeStudentInterestById(i.id);
+                                      } else {
+                                        addStudentInterestByName(i.name);
+                                      }
+                                    }}
+                                    className={`px-2.5 py-1 rounded-full font-bold cursor-pointer transition-colors ${
+                                      isAdded
+                                        ? 'bg-[#6215E5] text-white'
+                                        : 'bg-[#EFE9FF] text-[#5B18E5] hover:bg-[#E1D6FF]'
+                                    }`}
+                                  >
+                                    {isAdded ? `✓ ${i.name}` : `+ ${i.name}`}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-500 tabular-nums">
+                        {myNormalizedInterests.length} minat dipilih dalam
+                        profil
+                      </span>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (newInterestInput.trim()) {
-                            addStudentInterestByName(newInterestInput.trim());
-                            setNewInterestInput('');
-                            setActiveModal(null);
-                          }
-                        }}
+                        onClick={() => setActiveModal(null)}
                         className="px-4 py-2 rounded-xl bg-[#6215E5] text-white font-bold cursor-pointer"
                       >
-                        Tambah
+                        Selesai
                       </button>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {interests
-                        .filter(
-                          (i) =>
-                            !myNormalizedInterests.some(
-                              (mi) => mi.interest_id === i.id
-                            )
-                        )
-                        .slice(0, 8)
-                        .map((i) => (
-                          <button
-                            key={i.id}
-                            type="button"
-                            onClick={() => {
-                              addStudentInterestByName(i.name);
-                              setActiveModal(null);
-                            }}
-                            className="px-2.5 py-1 rounded-full bg-[#EFE9FF] text-[#5B18E5] font-bold cursor-pointer"
-                          >
-                            + {i.name}
-                          </button>
-                        ))}
                     </div>
                   </div>
                 </>
@@ -8073,10 +11949,15 @@ export function MainMobileAppInterface() {
               {/* MODAL: SAVED ACTIVITIES (saved_projects) */}
               {activeModal === 'saved-activities' && (
                 <>
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-base font-extrabold font-display">
-                      Saved Activities
-                    </h3>
+                  <div className="flex items-center justify-between border-b border-purple-100 pb-2.5">
+                    <div>
+                      <div className="text-[10px] font-extrabold uppercase tracking-widest text-[#5B18E5]">
+                        Koleksi Tanda Buku
+                      </div>
+                      <h3 className="text-base font-extrabold font-display">
+                        Saved Activities
+                      </h3>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setActiveModal(null)}
@@ -8088,47 +11969,52 @@ export function MainMobileAppInterface() {
                   {savedProjects.filter(
                     (s) => s.student_id === currentUser?.id
                   ).length === 0 ? (
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-slate-500 py-4 text-center">
                       Tiada aktiviti disimpan. Tekan ikon penanda buku pada kad
                       aktiviti di halaman Home.
                     </p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="divide-y divide-purple-100 border-b border-purple-100">
                       {savedProjects
                         .filter((s) => s.student_id === currentUser?.id)
-                        .map((sp) => {
+                        .map((sp, idx) => {
                           const found = cardsCatalog.find(
                             (c) => c.id === sp.project_id
                           );
                           return (
                             <div
                               key={sp.project_id}
-                              className="p-3 rounded-xl bg-[#F4EFFF] flex items-center justify-between text-xs"
+                              className="py-3 flex items-center justify-between gap-3 text-xs"
                             >
-                              <div>
-                                <div className="font-bold text-[#14122E]">
-                                  {found?.title || sp.project_id}
-                                </div>
-                                <div className="text-[10.5px] text-slate-500">
-                                  {found?.dateText}
+                              <div className="flex items-start gap-2.5 min-w-0">
+                                <span className="text-[11px] font-extrabold font-display text-[#5B18E5] tabular-nums mt-0.5">
+                                  {String(idx + 1).padStart(2, '0')}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="font-extrabold text-[#14122E] truncate">
+                                    {found?.title || sp.project_id}
+                                  </div>
+                                  <div className="text-[10.5px] text-slate-500 truncate">
+                                    {found?.dateText} · {found?.locationText}
+                                  </div>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-3 shrink-0">
                                 <button
                                   type="button"
                                   onClick={() =>
                                     openCardInfoModal(sp.project_id)
                                   }
-                                  className="px-3 py-1 rounded-lg bg-[#5B18E5] text-white font-bold cursor-pointer"
+                                  className="text-xs font-extrabold text-[#5B18E5] hover:underline cursor-pointer"
                                 >
-                                  Buka Info
+                                  Buka →
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() =>
                                     toggleSaveProject(sp.project_id)
                                   }
-                                  className="px-2 py-1 rounded-lg bg-white text-slate-600 border border-slate-200 cursor-pointer"
+                                  className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
                                 >
                                   Buang
                                 </button>
@@ -8487,7 +12373,7 @@ export function MainMobileAppInterface() {
                         <button
                           type="button"
                           onClick={() => {
-                            if (!newTaskTitle.trim()) return;
+                            if (!newTaskTitle.trim() || !currentCard) return;
                             createTask({
                               project_id: currentCard.id,
                               title: newTaskTitle.trim(),
@@ -8561,7 +12447,7 @@ export function MainMobileAppInterface() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (!chatInput.trim()) return;
+                        if (!chatInput.trim() || !currentCard) return;
                         sendMessage(currentCard.id, chatInput.trim());
                         setChatInput('');
                       }}
@@ -8672,34 +12558,36 @@ export function MainMobileAppInterface() {
                     </div>
 
                     {/* Invite Consenting Student Candidate (RPC invite_candidate) */}
-                    <div className="space-y-1.5 pt-2 border-t border-slate-200">
-                      <div className="font-bold text-slate-800">
-                        Jemput Pelajar ke {currentCard.title} (RPC
-                        invite_candidate):
+                    {currentCard && (
+                      <div className="space-y-1.5 pt-2 border-t border-slate-200">
+                        <div className="font-bold text-slate-800">
+                          Jemput Pelajar ke {currentCard.title} (RPC
+                          invite_candidate):
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {profiles
+                            .filter(
+                              (p) => p.id !== currentUser?.id && p.discoverable
+                            )
+                            .map((cand) => (
+                              <button
+                                key={cand.id}
+                                type="button"
+                                onClick={() =>
+                                  inviteCandidate(
+                                    currentCard.id,
+                                    cand.id,
+                                    `Jemputan menyertai pasukan ${currentCard.title}.`
+                                  )
+                                }
+                                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-[#EFE9FF] text-[#4C1D95] font-bold cursor-pointer"
+                              >
+                                + Jemput {cand.display_name}
+                              </button>
+                            ))}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {profiles
-                          .filter(
-                            (p) => p.id !== currentUser?.id && p.discoverable
-                          )
-                          .map((cand) => (
-                            <button
-                              key={cand.id}
-                              type="button"
-                              onClick={() =>
-                                inviteCandidate(
-                                  currentCard.id,
-                                  cand.id,
-                                  `Jemputan menyertai pasukan ${currentCard.title}.`
-                                )
-                              }
-                              className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-[#EFE9FF] text-[#4C1D95] font-bold cursor-pointer"
-                            >
-                              + Jemput {cand.display_name}
-                            </button>
-                          ))}
-                      </div>
-                    </div>
+                    )}
 
                     <div className="flex gap-2 pt-2 border-t border-slate-200">
                       <button
@@ -8912,6 +12800,202 @@ export function MainMobileAppInterface() {
                   </div>
                 </>
               )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* FULL-SCREEN INTERACTIVE POSTER & CATALOG LIGHTBOX MODAL (Zoom 1x-3x + Touch Swipe) */}
+        {lightboxIndex !== null && modalGalleryImages[lightboxIndex] && (
+          <div
+            className="fixed inset-0 z-50 bg-[#070214]/96 backdrop-blur-md flex flex-col select-none"
+            onClick={() => {
+              setLightboxIndex(null);
+              setLightboxZoom(1);
+            }}
+          >
+            {/* Top Bar: Counter, Category Badge, Zoom Controls & Close */}
+            <div
+              className="px-4 pt-4 pb-3 flex items-center justify-between gap-2 border-b border-white/10 text-white shrink-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-extrabold text-amber-300 tabular-nums">
+                    {lightboxIndex + 1} / {modalGalleryImages.length}
+                  </span>
+                  <span className="text-xs font-extrabold text-white truncate">
+                    {modalCard?.title || 'Poster Aktiviti'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightboxZoom((z) => Math.max(1, Number((z - 0.5).toFixed(1))))
+                  }
+                  aria-label="Zum keluar"
+                  className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightboxZoom((z) => (z >= 3 ? 1 : Number((z + 0.5).toFixed(1))))
+                  }
+                  className="h-9 px-2.5 rounded-xl bg-[#5B18E5] text-white font-extrabold text-xs tabular-nums cursor-pointer"
+                >
+                  {lightboxZoom}x
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightboxZoom((z) => Math.min(3, Number((z + 0.5).toFixed(1))))
+                  }
+                  aria-label="Zum masuk"
+                  className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLightboxIndex(null);
+                    setLightboxZoom(1);
+                  }}
+                  aria-label="Tutup Lightbox"
+                  className="w-9 h-9 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white flex items-center justify-center ml-1 cursor-pointer"
+                >
+                  <X className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              </div>
+            </div>
+
+            {/* Center Interactive Poster Viewport (Swipe Left/Right + Double Tap to Zoom) */}
+            <div
+              className="relative flex-1 min-h-0 flex items-center justify-center overflow-auto p-4"
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => {
+                if (lightboxZoom > 1) return;
+                lightboxTouchStartXRef.current = e.touches[0].clientX;
+              }}
+              onTouchEnd={(e) => {
+                if (
+                  lightboxZoom > 1 ||
+                  lightboxTouchStartXRef.current === null
+                ) {
+                  lightboxTouchStartXRef.current = null;
+                  return;
+                }
+                const dx =
+                  e.changedTouches[0].clientX - lightboxTouchStartXRef.current;
+                lightboxTouchStartXRef.current = null;
+                if (dx < -45 && modalGalleryImages.length > 1) {
+                  setLightboxIndex(
+                    (prev) => ((prev ?? 0) + 1) % modalGalleryImages.length
+                  );
+                  setLightboxZoom(1);
+                } else if (dx > 45 && modalGalleryImages.length > 1) {
+                  setLightboxIndex(
+                    (prev) =>
+                      ((prev ?? 0) - 1 + modalGalleryImages.length) %
+                      modalGalleryImages.length
+                  );
+                  setLightboxZoom(1);
+                }
+              }}
+            >
+              {/* Previous Poster Arrow */}
+              {modalGalleryImages.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLightboxIndex(
+                      (prev) =>
+                        ((prev ?? 0) - 1 + modalGalleryImages.length) %
+                        modalGalleryImages.length
+                    );
+                    setLightboxZoom(1);
+                  }}
+                  aria-label="Gambar sebelumnya"
+                  className="absolute left-3 z-20 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 border border-white/25 text-white flex items-center justify-center shadow-lg cursor-pointer"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              )}
+
+              {/* Poster Image with Smooth Scale Zoom */}
+              <div
+                onDoubleClick={() =>
+                  setLightboxZoom((z) => (z === 1 ? 2 : 1))
+                }
+                style={{
+                  transform: `scale(${lightboxZoom})`,
+                  transformOrigin: 'center center',
+                }}
+                className="transition-transform duration-200 ease-out max-w-full max-h-full flex items-center justify-center"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={modalGalleryImages[lightboxIndex].url}
+                  alt={modalGalleryImages[lightboxIndex].caption}
+                  className="max-h-[68vh] w-auto rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.75)] border border-white/20 object-contain"
+                />
+              </div>
+
+              {/* Next Poster Arrow */}
+              {modalGalleryImages.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLightboxIndex(
+                      (prev) => ((prev ?? 0) + 1) % modalGalleryImages.length
+                    );
+                    setLightboxZoom(1);
+                  }}
+                  aria-label="Gambar seterusnya"
+                  className="absolute right-3 z-20 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 border border-white/25 text-white flex items-center justify-center shadow-lg cursor-pointer"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            {/* Bottom Thumbnail Strip */}
+            <div
+              className="px-4 pt-3 pb-5 bg-[#0E0424]/95 border-t border-white/10 shrink-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                {modalGalleryImages.map((thumb, tIdx) => {
+                  const active = tIdx === lightboxIndex;
+                  return (
+                    <button
+                      key={thumb.id}
+                      type="button"
+                      onClick={() => {
+                        setLightboxIndex(tIdx);
+                        setLightboxZoom(1);
+                      }}
+                      className={`relative w-13 h-16 rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                        active
+                          ? 'border-amber-400 scale-105 shadow-md'
+                          : 'border-white/20 opacity-60 hover:opacity-95'
+                      }`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={thumb.url}
+                        alt={thumb.caption}
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

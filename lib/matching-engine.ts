@@ -16,10 +16,271 @@ import {
 import {WEEKDAY_SHORT} from './seed-data';
 
 const PROFICIENCY_MULTIPLIER: Record<Proficiency, number> = {
-  beginner: 0.75,
+  beginner: 0.78,
   intermediate: 0.9,
   advanced: 1.0,
 };
+
+// Maps Home / Search Official Filter Tags to Skill Categories, Interest Categories, and Project Keywords
+const FILTER_TAG_DOMAIN_RULES: Record<
+  string,
+  {
+    skillCategories?: string[];
+    interestCategories?: string[];
+    keywords?: string[];
+  }
+> = {
+  programming: {
+    skillCategories: ['Tech & AI (FKI)'],
+    keywords: [
+      'programming',
+      'web',
+      'mobile',
+      'react',
+      'next.js',
+      'python',
+      'coding',
+      'cybersecurity',
+      'hackathon',
+    ],
+  },
+  planning: {
+    skillCategories: ['Leadership & Operations'],
+    keywords: [
+      'planning',
+      'project management',
+      'logistics',
+      'event',
+      'protocol',
+      'secretary',
+    ],
+  },
+  database: {
+    skillCategories: ['Tech & AI (FKI)'],
+    keywords: ['database', 'sql', 'data', 'cloud', 'telemetry'],
+  },
+  'ui/ux design': {
+    skillCategories: ['Tech & AI (FKI)', 'Creative, Media & Arts (FSSK)'],
+    keywords: ['ui/ux', 'figma', 'design', 'graphic', 'mobile'],
+  },
+  'ai & data': {
+    skillCategories: ['Tech & AI (FKI)', 'Academic & Research'],
+    interestCategories: ['Teknologi & Inovasi'],
+    keywords: ['ai', 'machine learning', 'data', 'analytics', 'spss', 'python'],
+  },
+  'engineering & iot': {
+    skillCategories: ['Engineering & IoT (FKJ)'],
+    interestCategories: ['Teknologi & Inovasi'],
+    keywords: [
+      'iot',
+      'engineering',
+      'robotics',
+      'cad',
+      'electronics',
+      'solar',
+      'shuttle',
+      'esp32',
+      'fkj',
+    ],
+  },
+  'sains & marin': {
+    skillCategories: ['Science, Marine & Agro (FSSA/FPL)'],
+    interestCategories: ['Sains, Marin & Kelestarian'],
+    keywords: [
+      'marine',
+      'coral',
+      'reef',
+      'gis',
+      'agro',
+      'agritech',
+      'eco',
+      'laboratory',
+      'fssa',
+      'fpl',
+    ],
+  },
+  'perniagaan & tajaan': {
+    skillCategories: ['Business & Finance (FPEP/FKAL)'],
+    interestCategories: ['Keusahawanan & Kewangan'],
+    keywords: [
+      'startup',
+      'pitch',
+      'finance',
+      'business',
+      'marketing',
+      'sponsorship',
+      'tamu',
+      'fpep',
+      'fkal',
+    ],
+  },
+  'kesihatan & komuniti': {
+    skillCategories: [
+      'Health, Food & Psychology (FPSK/FSMP/FPP)',
+      'Leadership & Operations',
+    ],
+    interestCategories: ['Kesihatan, Pendidikan & CSR'],
+    keywords: [
+      'health',
+      'kesihatan',
+      'nutrition',
+      'gizi',
+      'food',
+      'psychology',
+      'minda',
+      'csr',
+      'komuniti',
+      'community',
+      'fpsk',
+      'fsmp',
+      'fpp',
+    ],
+  },
+  'media & kreatif': {
+    skillCategories: ['Creative, Media & Arts (FSSK)'],
+    interestCategories: ['Seni, Budaya & Sukan'],
+    keywords: [
+      'media',
+      'creative',
+      'photography',
+      'video',
+      'dokumentari',
+      'culture',
+      'warisan',
+      'graphic',
+      'fssk',
+    ],
+  },
+  penyelidikan: {
+    skillCategories: [
+      'Academic & Research',
+      'Science, Marine & Agro (FSSA/FPL)',
+    ],
+    keywords: [
+      'research',
+      'penyelidikan',
+      'academic',
+      'lab',
+      'survey',
+      'gis',
+      'analysis',
+    ],
+  },
+  'beginner friendly': {
+    keywords: ['beginner friendly', 'terbuka kepada semua', 'sukarelawan'],
+  },
+  'rentas fakulti': {
+    keywords: ['rentas fakulti', 'semua fakulti', 'terbuka kepada'],
+  },
+  'kerja lapangan': {
+    keywords: ['kerja lapangan', 'fieldwork', 'lapangan', 'ekspedisi', 'kem'],
+  },
+  'fleksibel / hibrid': {
+    keywords: ['fleksibel / hibrid', 'hibrid', 'fleksibel'],
+  },
+  extrovert: {
+    keywords: ['extrovert', 'pitch', 'networking', 'speaking', 'komuniti'],
+  },
+  'female only': {
+    keywords: ['female only'],
+  },
+};
+
+export function projectMatchesOfficialFilter(params: {
+  filterLabel: string;
+  project: Project;
+  reqSkills: ProjectRequiredSkill[];
+  projInterests: ProjectInterest[];
+  skillsCatalog: Skill[];
+  interestsCatalog: Interest[];
+}): boolean {
+  const {
+    filterLabel,
+    project,
+    reqSkills,
+    projInterests,
+    skillsCatalog,
+    interestsCatalog,
+  } = params;
+  const norm = filterLabel.trim().toLowerCase();
+  if (!norm) return true;
+
+  const attrTags = (project.attribute_tags || []).map((t) => t.toLowerCase());
+  const cardTags = (project.tags || []).map((t) => t.toLowerCase());
+  if (
+    attrTags.some((t) => t === norm || t.includes(norm)) ||
+    cardTags.some((t) => t === norm || t.includes(norm))
+  ) {
+    return true;
+  }
+
+  const skillById = new Map(skillsCatalog.map((s) => [s.id, s]));
+  const projSkillObjs = reqSkills
+    .filter((r) => r.project_id === project.id)
+    .map((r) => skillById.get(r.skill_id))
+    .filter((s): s is Skill => Boolean(s));
+
+  if (
+    projSkillObjs.some(
+      (s) =>
+        s.id.toLowerCase() === norm ||
+        s.name.toLowerCase().includes(norm) ||
+        s.category.toLowerCase().includes(norm)
+    )
+  ) {
+    return true;
+  }
+
+  const intrById = new Map(interestsCatalog.map((i) => [i.id, i]));
+  const projIntrObjs = projInterests
+    .filter((pi) => pi.project_id === project.id)
+    .map(
+      (pi) =>
+        intrById.get(pi.interest_id) ||
+        interestsCatalog.find(
+          (i) => i.name.toLowerCase() === pi.interest_id.toLowerCase()
+        )
+    )
+    .filter((i): i is Interest => Boolean(i));
+
+  if (
+    projIntrObjs.some(
+      (i) =>
+        i.id.toLowerCase() === norm ||
+        i.name.toLowerCase().includes(norm) ||
+        (i.category || '').toLowerCase().includes(norm)
+    )
+  ) {
+    return true;
+  }
+
+  const rule = FILTER_TAG_DOMAIN_RULES[norm];
+  if (rule) {
+    if (
+      rule.skillCategories &&
+      projSkillObjs.some((s) => rule.skillCategories!.includes(s.category))
+    ) {
+      return true;
+    }
+    if (
+      rule.interestCategories &&
+      projIntrObjs.some(
+        (i) => i.category && rule.interestCategories!.includes(i.category)
+      )
+    ) {
+      return true;
+    }
+    if (rule.keywords) {
+      const textBlob = `${project.title} ${project.description} ${project.badge_line_1 || ''} ${project.badge_line_2 || ''} ${project.audience || ''} ${attrTags.join(' ')} ${cardTags.join(' ')}`.toLowerCase();
+      if (rule.keywords.some((kw) => textBlob.includes(kw))) {
+        return true;
+      }
+    }
+  }
+
+  const fallbackText = `${project.title} ${project.description} ${attrTags.join(' ')} ${cardTags.join(' ')}`.toLowerCase();
+  return fallbackText.includes(norm);
+}
 
 function parseMinutes(timeStr: string): number {
   const [hh, mm] = timeStr.split(':').map((n) => parseInt(n, 10));
@@ -71,7 +332,7 @@ export function computeScheduleOverlap(
       overlapMinutes: 0,
       totalRequiredMinutes: 0,
       ratio: 1,
-      summaries: ['Flexible schedule (no fixed meeting slots required)'],
+      summaries: ['Jadual fleksibel (tiada slot tetap diwajibkan)'],
     };
   }
 
@@ -134,8 +395,8 @@ export function computeScheduleOverlap(
 }
 
 /**
- * Explainable heuristic matching engine (40% Skills, 25% Interests, 20% Schedule, 15% Goals & Attributes).
- * Reads directly from normalized join tables + active Home filter tags.
+ * Explainable heuristic matching engine (40% Skills, 25% Interests, 20% Schedule, 15% Goals & Filters).
+ * Works across all predetermined UMS skill categories, interests (minat), and official filter tags.
  */
 export function evaluateStudentProjectMatch(params: {
   student: Profile;
@@ -164,29 +425,20 @@ export function evaluateStudentProjectMatch(params: {
     studentSlots,
     projectSlots,
     projectMembers,
-    activeFilterTags = student.active_filter_tags || [
-      'Programming',
-      'Planning',
-      'Database',
-      'Extrovert',
-      'Female only',
-    ],
+    activeFilterTags = student.active_filter_tags || [],
     requireDiscoveryConsent = false,
   } = params;
 
   const ineligibilityReasons: string[] = [];
 
-  // 1. Project open status
   if (project.status !== 'open') {
     ineligibilityReasons.push(`Project is currently ${project.status}`);
   }
 
-  // 2. Owner exclusion
   if (project.owner_id === student.id) {
     ineligibilityReasons.push('Student is the project owner');
   }
 
-  // 3. Active member exclusion & capacity check
   const activeMembers = projectMembers.filter(
     (m) =>
       m.project_id === project.id &&
@@ -206,12 +458,13 @@ export function evaluateStudentProjectMatch(params: {
     ineligibilityReasons.push('Project team capacity is full');
   }
 
-  // 4. Discovery consent check
-  if (requireDiscoveryConsent && (!student.discoverable || !student.consent_at)) {
+  if (
+    requireDiscoveryConsent &&
+    (!student.discoverable || !student.consent_at)
+  ) {
     ineligibilityReasons.push('Student has not opted into public discovery');
   }
 
-  // 5. Weekly commitment check
   if (
     project.min_weekly_hours > 0 &&
     (student.weekly_hours || 0) < project.min_weekly_hours
@@ -221,22 +474,27 @@ export function evaluateStudentProjectMatch(params: {
     );
   }
 
-  // 6. Skill Coverage (40% weight) + Home Filter Tag Modulation
+  // 6. Skill Coverage (40% weight) + Active Official Filter Tag Synergy
   const reqSkills = projectRequiredSkills.filter(
     (r) => r.project_id === project.id
   );
-  const studSkillMap = new Map<string, Proficiency>();
-  studentSkills
-    .filter((s) => s.student_id === student.id)
-    .forEach((s) => studSkillMap.set(s.skill_id, s.proficiency));
-
   const skillById = new Map<string, Skill>(
     skillsCatalog.map((s) => [s.id, s])
   );
-
-  const normalizedFilterSet = new Set(
-    activeFilterTags.map((t) => t.toLowerCase())
+  const skillByNameLower = new Map<string, Skill>(
+    skillsCatalog.map((s) => [s.name.toLowerCase(), s])
   );
+
+  const studSkillMap = new Map<string, Proficiency>();
+  studentSkills
+    .filter((s) => s.student_id === student.id)
+    .forEach((s) => {
+      studSkillMap.set(s.skill_id, s.proficiency);
+      const skObj = skillById.get(s.skill_id);
+      if (skObj) {
+        studSkillMap.set(skObj.name.toLowerCase(), s.proficiency);
+      }
+    });
 
   let totalImportanceWeight = 0;
   let earnedImportanceWeight = 0;
@@ -248,24 +506,14 @@ export function evaluateStudentProjectMatch(params: {
   for (const req of reqSkills) {
     const importance = req.importance || 3;
     totalImportanceWeight += importance;
-    const skillObj = skillById.get(req.skill_id);
-    const sName = skillObj?.name || 'Skill';
-    const sCategory = skillObj?.category || '';
-    const prof = studSkillMap.get(req.skill_id);
-
-    // Check if the Home filter pill corresponding to this skill/category is toggled off
-    const isProgrammingRelated =
-      sCategory === 'Programming' || sName === 'Web Development';
-    const isDatabaseRelated = sCategory === 'Data' || sName === 'Database';
-    const isPlanningRelated = sCategory === 'Management' || sName === 'Planning';
-
-    let filterMultiplier = 1.0;
-    if (isProgrammingRelated && !normalizedFilterSet.has('programming')) {
-      filterMultiplier = 0.55;
-    }
-    if (isDatabaseRelated && !normalizedFilterSet.has('database')) {
-      filterMultiplier = 0.55;
-    }
+    const skillObj =
+      skillById.get(req.skill_id) ||
+      skillByNameLower.get(req.skill_id.toLowerCase());
+    const sName = skillObj?.name || req.skill_id;
+    const prof =
+      studSkillMap.get(req.skill_id) ||
+      (skillObj ? studSkillMap.get(skillObj.id) : undefined) ||
+      studSkillMap.get(sName.toLowerCase());
 
     if (req.mandatory) {
       totalMandatorySkills += 1;
@@ -278,11 +526,7 @@ export function evaluateStudentProjectMatch(params: {
 
     if (prof) {
       matchedSkillsNames.push(sName);
-      earnedImportanceWeight +=
-        importance * PROFICIENCY_MULTIPLIER[prof] * filterMultiplier;
-    } else if (isPlanningRelated && normalizedFilterSet.has('planning')) {
-      matchedSkillsNames.push(sName);
-      earnedImportanceWeight += importance * 0.45;
+      earnedImportanceWeight += importance * PROFICIENCY_MULTIPLIER[prof];
     }
   }
 
@@ -292,49 +536,87 @@ export function evaluateStudentProjectMatch(params: {
     );
   }
 
-  const rawSkillRatio =
-    totalImportanceWeight > 0
-      ? earnedImportanceWeight / totalImportanceWeight
-      : 0.78;
-  // Extra custom skill pills added on Home boost skill score slightly within the 40-point cap
-  const customSkillBoost = activeFilterTags.filter(
-    (t) =>
-      !['Programming', 'Planning', 'Database', 'Extrovert', 'Female only'].includes(
-        t
-      )
+  // Evaluate how many activeFilterTags match this project
+  const matchedFilterCount = activeFilterTags.filter((tag) =>
+    projectMatchesOfficialFilter({
+      filterLabel: tag,
+      project,
+      reqSkills,
+      projInterests: projectInterests,
+      skillsCatalog,
+      interestsCatalog,
+    })
   ).length;
-  const skillScore = Math.min(
-    40,
-    Math.max(10, Math.round(rawSkillRatio * 40) + customSkillBoost * 2)
+
+  const filterRatio =
+    activeFilterTags.length > 0
+      ? matchedFilterCount / activeFilterTags.length
+      : 0.7;
+
+  let baseSkillScore: number;
+  if (totalImportanceWeight > 0) {
+    const rawSkillRatio = earnedImportanceWeight / totalImportanceWeight;
+    // Blend student's profile skill match (75%) with active Home filter synergy (25%)
+    const blendedRatio =
+      activeFilterTags.length > 0
+        ? rawSkillRatio * 0.72 + filterRatio * 0.28
+        : rawSkillRatio;
+    baseSkillScore = Math.round(8 + blendedRatio * 32);
+  } else {
+    // Optional skills left empty (open-field activity): score reflects filter alignment + welcoming baseline
+    baseSkillScore =
+      activeFilterTags.length > 0
+        ? Math.round(22 + filterRatio * 16)
+        : 32;
+  }
+
+  const skillScore = Math.min(40, Math.max(8, baseSkillScore));
+
+  // 7. Shared Interests / Minat (25% weight)
+  const interestById = new Map<string, Interest>(
+    interestsCatalog.map((i) => [i.id, i])
+  );
+  const interestByNameLower = new Map<string, Interest>(
+    interestsCatalog.map((i) => [i.name.toLowerCase(), i])
   );
 
-  // 7. Shared Interests (25% weight)
-  const projInterestIds = new Set(
-    projectInterests
-      .filter((pi) => pi.project_id === project.id)
-      .map((pi) => pi.interest_id)
+  const normalizeInterestKey = (rawKey: string): string => {
+    const byId = interestById.get(rawKey);
+    if (byId) return byId.id;
+    const byName = interestByNameLower.get(rawKey.toLowerCase());
+    if (byName) return byName.id;
+    return rawKey.toLowerCase();
+  };
+
+  const projInterestKeys = Array.from(
+    new Set(
+      projectInterests
+        .filter((pi) => pi.project_id === project.id)
+        .map((pi) => normalizeInterestKey(pi.interest_id))
+    )
   );
-  const studInterestIds = new Set(
+
+  const studInterestKeySet = new Set(
     studentInterests
       .filter((si) => si.student_id === student.id)
-      .map((si) => si.interest_id)
-  );
-  const interestNameById = new Map<string, string>(
-    interestsCatalog.map((i) => [i.id, i.name])
+      .map((si) => normalizeInterestKey(si.interest_id))
   );
 
   const sharedInterestsNames: string[] = [];
-  projInterestIds.forEach((id) => {
-    if (studInterestIds.has(id)) {
-      sharedInterestsNames.push(interestNameById.get(id) || 'Interest');
+  for (const pKey of projInterestKeys) {
+    if (studInterestKeySet.has(pKey)) {
+      const iObj = interestById.get(pKey);
+      sharedInterestsNames.push(iObj ? iObj.name : pKey);
     }
-  });
+  }
 
-  const rawInterestRatio =
-    projInterestIds.size > 0
-      ? sharedInterestsNames.length / projInterestIds.size
-      : 0.75;
-  const interestScore = Math.min(25, Math.round(rawInterestRatio * 25));
+  let interestScore: number;
+  if (projInterestKeys.length > 0) {
+    const rawInterestRatio = sharedInterestsNames.length / projInterestKeys.length;
+    interestScore = Math.min(25, Math.max(5, Math.round(5 + rawInterestRatio * 20)));
+  } else {
+    interestScore = 18;
+  }
 
   // 8. Schedule Overlap (20% weight)
   const pSlots = projectSlots.filter((s) => s.project_id === project.id);
@@ -345,22 +627,26 @@ export function evaluateStudentProjectMatch(params: {
     ineligibilityReasons.push('No overlapping weekly meeting time window');
   }
 
-  // 330 / 390 = 0.846 -> Math.floor(0.846 * 19) = 16 / 20 for prj-techfest
-  const scheduleScore = Math.min(20, Math.floor(overlap.ratio * 19));
+  const scheduleScore =
+    pSlots.length > 0
+      ? Math.min(20, Math.max(4, Math.round(4 + overlap.ratio * 16)))
+      : 18;
   const overlapHoursPerWeek = Number((overlap.overlapMinutes / 60).toFixed(1));
 
-  // 9. Project Type / Goal & Attribute Alignment (15% weight)
+  // 9. Project Type / Goal & Official Filter Alignment (15% weight)
   const prefs = student.preferred_project_types || [];
   const goalAligned =
     prefs.length === 0 || prefs.includes(project.project_type);
-  let goalScore = goalAligned ? 10 : 5;
-  if (normalizedFilterSet.has('extrovert')) goalScore += 1;
-  if (normalizedFilterSet.has('female only')) goalScore += 1;
-  goalScore = Math.min(15, goalScore);
+  const typePoints = goalAligned ? 8 : 4;
+  const filterPoints =
+    activeFilterTags.length > 0
+      ? Math.round(filterRatio * 7)
+      : 5;
+  const goalScore = Math.min(15, typePoints + filterPoints);
 
   const totalScore = Math.min(
     99,
-    Math.max(35, skillScore + interestScore + scheduleScore + goalScore)
+    Math.max(32, skillScore + interestScore + scheduleScore + goalScore)
   );
 
   const eligible = ineligibilityReasons.length === 0;
@@ -368,22 +654,21 @@ export function evaluateStudentProjectMatch(params: {
   const parts: string[] = [];
   if (reqSkills.length > 0) {
     parts.push(
-      `Matches ${matchedSkillsNames.length}/${reqSkills.length} required skills`
+      `Sepadan ${matchedSkillsNames.length}/${reqSkills.length} kemahiran`
     );
-  }
-  if (overlap.summaries.length > 0) {
-    parts.push(`Overlaps ${overlap.summaries.slice(0, 2).join(', ')}`);
+  } else {
+    parts.push('Terbuka untuk semua tahap kemahiran');
   }
   if (sharedInterestsNames.length > 0) {
     parts.push(
-      `Shared interest in ${sharedInterestsNames.slice(0, 2).join(' & ')}`
+      `Minat sama: ${sharedInterestsNames.slice(0, 2).join(' & ')}`
     );
   }
+  if (overlap.summaries.length > 0) {
+    parts.push(`Jadual: ${overlap.summaries.slice(0, 2).join(', ')}`);
+  }
 
-  const explanationSummary =
-    parts.length > 0
-      ? parts.join(' · ')
-      : 'Compatibility calculated from normalized skills, interests, and schedule slots';
+  const explanationSummary = parts.join(' · ');
 
   return {
     totalScore,

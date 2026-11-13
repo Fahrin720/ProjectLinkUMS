@@ -31,8 +31,9 @@ export type BetaTaskCode = 'T01' | 'T02' | 'T03' | 'T04' | 'T05';
 
 export type AvailabilityStatusType = 'Available' | 'Busy' | 'In Team';
 export type UserRoleMode = 'STUDENT' | 'ORGANIZER';
+export type AppUserRole = 'admin' | 'user';
 
-// 01. profiles (Normalized public student/organizer profile adapted for Home + Profile + Side Menu UI)
+// 01. profiles (Normalized public profile adapted for Home + Profile + Side Menu UI)
 export interface Profile {
   id: string;
   display_name: string;
@@ -43,6 +44,7 @@ export interface Profile {
   year_of_study: number; // 1..8
   location?: string;
   availability_status?: AvailabilityStatusType;
+  role?: AppUserRole;
   role_mode?: UserRoleMode;
   bio: string | null;
   avatar_url: string | null;
@@ -82,6 +84,7 @@ export interface StudentSkill {
 export interface Interest {
   id: string;
   name: string;
+  category?: string;
 }
 
 // 05. student_interests
@@ -97,6 +100,13 @@ export interface AvailabilitySlot {
   weekday: number; // 1 (Mon) .. 7 (Sun)
   start_time: string; // HH:MM
   end_time: string; // HH:MM
+}
+
+export interface ProjectGalleryItem {
+  id: string;
+  url: string;
+  caption: string;
+  badge?: string;
 }
 
 // 07. projects
@@ -123,6 +133,7 @@ export interface Project {
   banner_url?: string | null;
   banner_preset?: string;
   banner_position_y?: number;
+  gallery_images?: ProjectGalleryItem[];
   created_at: string;
   updated_at: string;
 }
@@ -306,6 +317,7 @@ export interface CreateProjectPayload {
   p_banner_url?: string | null;
   p_banner_preset?: string;
   p_banner_position_y?: number;
+  p_gallery_images?: ProjectGalleryItem[];
   p_required_skills: {
     skill_id: string;
     mandatory: boolean;

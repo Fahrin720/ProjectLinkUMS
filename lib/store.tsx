@@ -19,6 +19,7 @@ import {
   Proficiency,
   Profile,
   Project,
+  ProjectGalleryItem,
   ProjectInterest,
   ProjectInvitation,
   ProjectMeetingSlot,
@@ -27,6 +28,7 @@ import {
   ProjectRequiredSkill,
   ProjectStatus,
   ProjectTask,
+  ProjectType,
   SavedProject,
   SaveMyProfilePayload,
   Skill,
@@ -37,6 +39,7 @@ import {
   TaskStatus,
 } from './types';
 import {
+  getDefaultGalleryForProject,
   INITIAL_ACTIVITY_HISTORY,
   INITIAL_APPLICATIONS,
   INITIAL_AVAILABILITY_SLOTS,
@@ -57,9 +60,10 @@ import {
   INITIAL_SKILLS,
   INITIAL_STUDENT_INTERESTS,
   INITIAL_STUDENT_SKILLS,
+  OFFICIAL_FILTER_TAGS,
 } from './seed-data';
 
-const STORAGE_KEY = 'projectlink_ums_normalized_db_v4';
+const STORAGE_KEY = 'projectlink_ums_clean_admin_v1';
 
 interface DatabaseState {
   currentUserId: string;
@@ -94,6 +98,7 @@ export interface ToastMessage {
 
 interface ProjectLinkContextValue extends DatabaseState {
   currentUser: Profile | null;
+  isAdmin: boolean;
   toasts: ToastMessage[];
   dismissToast: (id: string) => void;
   notifyToast: (
@@ -110,8 +115,61 @@ interface ProjectLinkContextValue extends DatabaseState {
     facultyFull: string;
   }) => string;
   signInWithCredentials: (identifier: string) => Profile | null;
+  authSessionToken: string | null;
+  loginWithApi: (
+    identifier: string,
+    password: string
+  ) => Promise<{ok: boolean; error?: string; profile?: Profile}>;
+  registerWithApi: (params: {
+    displayName: string;
+    email: string;
+    password: string;
+    facultyShort: string;
+    facultyFull: string;
+    matricNo?: string;
+    phone?: string;
+  }) => Promise<{ok: boolean; error?: string; profile?: Profile}>;
+  initiateSignUpWithApi: (params: {
+    displayName: string;
+    email: string;
+    password: string;
+    facultyShort: string;
+    facultyFull: string;
+    matricNo?: string;
+    phone?: string;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    email?: string;
+    verificationCode?: string;
+    message?: string;
+  }>;
+  verifySignUpCodeWithApi: (
+    email: string,
+    code: string
+  ) => Promise<{ok: boolean; error?: string; profile?: Profile}>;
+  resendVerificationCodeWithApi: (email: string) => Promise<{
+    ok: boolean;
+    error?: string;
+    verificationCode?: string;
+    message?: string;
+  }>;
+  initiatePasswordResetWithApi: (identifier: string) => Promise<{
+    ok: boolean;
+    error?: string;
+    email?: string;
+    resetCode?: string;
+    message?: string;
+  }>;
+  resetPasswordWithApi: (
+    email: string,
+    newPassword: string,
+    code: string
+  ) => Promise<{ok: boolean; error?: string; message?: string}>;
+  logoutWithApi: () => Promise<void>;
   resetDemoDatabase: () => void;
   refreshProjectsFeed: () => void;
+  seedStarterActivities: () => void;
 
   // 11 Canonical RPCs matching 03_FUNCTIONS_RPC.sql
   saveMyProfile: (payload: SaveMyProfilePayload) => void;
@@ -164,6 +222,27 @@ interface ProjectLinkContextValue extends DatabaseState {
   }) => void;
 
   // Workspace, Bookmark, Beta Feedback & Moderation Actions
+  updateProjectDetails: (
+    projectId: string,
+    updates: {
+      title?: string;
+      description?: string;
+      project_type?: ProjectType;
+      date_display?: string;
+      deadline?: string | null;
+      location?: string;
+      audience?: string;
+      slots_needed?: number;
+      min_weekly_hours?: number;
+      organizer_name?: string;
+      organizer_phone?: string;
+      badge_line_1?: string;
+      badge_line_2?: string;
+      tags?: string[];
+      status?: ProjectStatus;
+    }
+  ) => boolean;
+  deleteOwnProject: (projectId: string) => boolean;
   updateProjectBanner: (
     projectId: string,
     banner: {
@@ -172,6 +251,11 @@ interface ProjectLinkContextValue extends DatabaseState {
       banner_position_y?: number;
     }
   ) => void;
+  addProjectGalleryImage: (
+    projectId: string,
+    item: {url: string; caption: string; badge?: string}
+  ) => void;
+  removeProjectGalleryImage: (projectId: string, imageId: string) => void;
   toggleSaveProject: (projectId: string) => void;
   saveProjectOnly: (projectId: string) => void;
   createTask: (params: {
@@ -203,10 +287,16 @@ interface ProjectLinkContextValue extends DatabaseState {
     status: 'resolved' | 'dismissed',
     resolutionNote: string
   ) => void;
+  adminDeleteProject: (projectId: string) => void;
+  adminUpdateProjectStatus: (
+    projectId: string,
+    status: ProjectStatus
+  ) => void;
+  adminDeleteUser: (userId: string) => void;
 }
 
 const getInitialState = (): DatabaseState => ({
-  currentUserId: 'usr-aiman',
+  currentUserId: 'usr-admin',
   profiles: INITIAL_PROFILES,
   skills: INITIAL_SKILLS,
   studentSkills: INITIAL_STUDENT_SKILLS,
@@ -234,29 +324,181 @@ const ProjectLinkContext = createContext<ProjectLinkContextValue | null>(null);
 export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
   const [state, setState] = useState<DatabaseState>(getInitialState);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [authSessionToken, setAuthSessionToken] = useState<string | null>(null);
   const isHydratedRef = useRef(false);
 
-  // Restore saved state from localStorage after initial hydration completes
+  // Restore saved state from localStorage & verify active backend session after initial hydration
   useEffect(() => {
     queueMicrotask(() => {
       try {
+        const savedToken = window.localStorage.getItem(
+          'projectlink_auth_token_v1'
+        );
+        if (savedToken) {
+          setAuthSessionToken(savedToken);
+        }
         const raw = window.localStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<DatabaseState>;
           if (parsed.profiles && parsed.projects && parsed.skills) {
-            const migratedProjects = parsed.projects.map((p) =>
-              p.id === 'prj-shuttle' && p.owner_id === 'usr-izzah'
-                ? {
-                    ...p,
-                    owner_id: 'usr-aiman',
-                    organizer_name: 'Fahrin (Kelab Inovasi FKI)',
-                  }
-                : p
+            const legacyDummyIds = new Set([
+              'usr-aiman',
+              'usr-izzah',
+              'usr-daniel',
+              'usr-farah',
+              'usr-keith',
+            ]);
+
+            // Ensure usr-admin (fahrinmuneer3@gmail.com) exists and enforce 2-role abstraction ('admin' vs 'user')
+            const adminSeed = INITIAL_PROFILES.find(
+              (p) => p.id === 'usr-admin'
             );
+            const cleanedProfiles = parsed.profiles.filter(
+              (p) => !legacyDummyIds.has(p.id)
+            );
+            const hasAdminInParsed = cleanedProfiles.some(
+              (p) =>
+                p.id === 'usr-admin' ||
+                (p.email &&
+                  p.email.toLowerCase() === 'fahrinmuneer3@gmail.com')
+            );
+            const baseProfiles =
+              !hasAdminInParsed && adminSeed
+                ? [adminSeed, ...cleanedProfiles]
+                : cleanedProfiles;
+
+            const normalizedProfiles: Profile[] = baseProfiles.map((p) => {
+              const isEmailAdmin =
+                p.email?.toLowerCase() === 'fahrinmuneer3@gmail.com';
+              return {
+                ...p,
+                role: isEmailAdmin ? 'admin' : 'user',
+                is_admin: isEmailAdmin,
+              };
+            });
+
+            const resolvedUserId =
+              parsed.currentUserId &&
+              normalizedProfiles.some((p) => p.id === parsed.currentUserId)
+                ? parsed.currentUserId
+                : 'usr-admin';
+
+            // Merge predetermined official catalogs & ensure cross-faculty test activities are present
+            const officialSkillIds = new Set(INITIAL_SKILLS.map((s) => s.id));
+            const officialInterestIds = new Set(
+              INITIAL_INTERESTS.map((i) => i.id)
+            );
+            const officialFilterIds = new Set(
+              OFFICIAL_FILTER_TAGS.map((t) => t.id)
+            );
+
+            const sanitizedProfiles = normalizedProfiles.map((prof) => {
+              const cleanedFilterTags = (prof.active_filter_tags || []).filter(
+                (t) =>
+                  officialFilterIds.has(t) ||
+                  INITIAL_SKILLS.some((s) => s.name === t) ||
+                  INITIAL_INTERESTS.some((i) => i.name === t)
+              );
+              return {
+                ...prof,
+                active_filter_tags:
+                  cleanedFilterTags.length > 0
+                    ? cleanedFilterTags
+                    : prof.id === 'usr-admin'
+                      ? ['Programming', 'Planning', 'AI & Data']
+                      : [],
+              };
+            });
+
+            const existingProjects = Array.isArray(parsed.projects)
+              ? parsed.projects
+              : [];
+            const seedProjectIds = new Set(INITIAL_PROJECTS.map((p) => p.id));
+            const userCreatedProjects = existingProjects.filter(
+              (p) => !seedProjectIds.has(p.id)
+            );
+            const mergedProjects = [
+              ...userCreatedProjects,
+              ...INITIAL_PROJECTS,
+            ];
+
+            const existingReqSkills = Array.isArray(
+              parsed.projectRequiredSkills
+            )
+              ? parsed.projectRequiredSkills.filter(
+                  (r) =>
+                    !seedProjectIds.has(r.project_id) &&
+                    officialSkillIds.has(r.skill_id)
+                )
+              : [];
+            const mergedReqSkills = [
+              ...existingReqSkills,
+              ...INITIAL_PROJECT_REQUIRED_SKILLS,
+            ];
+
+            const existingProjInterests = Array.isArray(parsed.projectInterests)
+              ? parsed.projectInterests.filter(
+                  (pi) =>
+                    !seedProjectIds.has(pi.project_id) &&
+                    officialInterestIds.has(pi.interest_id)
+                )
+              : [];
+            const mergedProjInterests = [
+              ...existingProjInterests,
+              ...INITIAL_PROJECT_INTERESTS,
+            ];
+
+            const existingMeetSlots = Array.isArray(parsed.projectMeetingSlots)
+              ? parsed.projectMeetingSlots.filter(
+                  (ms) => !seedProjectIds.has(ms.project_id)
+                )
+              : [];
+            const mergedMeetSlots = [
+              ...existingMeetSlots,
+              ...INITIAL_PROJECT_MEETING_SLOTS,
+            ];
+
+            const validStudSkills = Array.isArray(parsed.studentSkills)
+              ? parsed.studentSkills.filter((ss) =>
+                  officialSkillIds.has(ss.skill_id)
+                )
+              : [];
+            const validStudInterests = Array.isArray(parsed.studentInterests)
+              ? parsed.studentInterests.filter((si) =>
+                  officialInterestIds.has(si.interest_id)
+                )
+              : [];
+
             setState((prev) => ({
               ...prev,
               ...parsed,
-              projects: migratedProjects,
+              currentUserId: resolvedUserId,
+              profiles: sanitizedProfiles,
+              skills: INITIAL_SKILLS,
+              interests: INITIAL_INTERESTS,
+              projects: mergedProjects,
+              projectRequiredSkills: mergedReqSkills,
+              projectInterests: mergedProjInterests,
+              projectMeetingSlots: mergedMeetSlots,
+              studentSkills:
+                validStudSkills.length > 0
+                  ? validStudSkills
+                  : INITIAL_STUDENT_SKILLS,
+              studentInterests:
+                validStudInterests.length > 0
+                  ? validStudInterests
+                  : INITIAL_STUDENT_INTERESTS,
+              availabilitySlots:
+                Array.isArray(parsed.availabilitySlots) &&
+                parsed.availabilitySlots.length > 0
+                  ? parsed.availabilitySlots
+                  : INITIAL_AVAILABILITY_SLOTS,
+              activityHistory:
+                Array.isArray(parsed.activityHistory) &&
+                parsed.activityHistory.length > 0
+                  ? parsed.activityHistory
+                  : INITIAL_ACTIVITY_HISTORY,
+              reports: Array.isArray(parsed.reports) ? parsed.reports : [],
             }));
           }
         }
@@ -306,6 +548,12 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
 
   const currentUser =
     state.profiles.find((p) => p.id === state.currentUserId) || null;
+
+  const isAdmin = Boolean(
+    currentUser?.role === 'admin' ||
+      currentUser?.is_admin ||
+      currentUser?.email?.toLowerCase() === 'fahrinmuneer3@gmail.com'
+  );
 
   const switchPersona = (userId: string) => {
     const found = state.profiles.find((p) => p.id === userId);
@@ -435,7 +683,7 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
       avatar_variant: 0,
       weekly_hours: 10,
       preferred_project_types: ['Innovation', 'Competition'],
-      active_filter_tags: ['Programming', 'Planning', 'Database'],
+      active_filter_tags: [],
       email: cleanEmail,
       phone: '+6012-883 4910',
       linkedin: `linkedin.com/in/${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '')}-ums`,
@@ -450,34 +698,6 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
       ...prev,
       currentUserId: newId,
       profiles: [newProfile, ...prev.profiles],
-      studentSkills: [
-        ...prev.studentSkills,
-        {student_id: newId, skill_id: 'sk-web', proficiency: 'intermediate'},
-        {student_id: newId, skill_id: 'sk-14', proficiency: 'intermediate'},
-        {student_id: newId, skill_id: 'sk-01', proficiency: 'beginner'},
-      ],
-      studentInterests: [
-        ...prev.studentInterests,
-        {student_id: newId, interest_id: 'in-01'},
-        {student_id: newId, interest_id: 'in-collab'},
-      ],
-      availabilitySlots: [
-        ...prev.availabilitySlots,
-        {
-          id: `av-${newId}-1`,
-          student_id: newId,
-          weekday: 3,
-          start_time: '14:00',
-          end_time: '17:00',
-        },
-        {
-          id: `av-${newId}-2`,
-          student_id: newId,
-          weekday: 5,
-          start_time: '15:00',
-          end_time: '17:00',
-        },
-      ],
     }));
 
     notifyToast(
@@ -528,6 +748,371 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
       facultyFull: 'Fakulti Komputeran dan Informatik (FKI), UMS',
     });
     return state.profiles.find((p) => p.id === createdId) || currentUser;
+  };
+
+  // =========================================================
+  // BACKEND API AUTHENTICATION ACTIONS (/api/auth)
+  // =========================================================
+  const syncAuthenticatedProfileIntoStore = (
+    profile: Profile,
+    token: string,
+    _isNewSignup = false
+  ) => {
+    setAuthSessionToken(token);
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem('projectlink_auth_token_v1', token);
+        window.sessionStorage.setItem(
+          'projectlink_auth_session_v1',
+          'authenticated'
+        );
+      } catch {
+        // Ignore storage errors
+      }
+    }
+
+    setState((prev) => {
+      const exists = prev.profiles.some((p) => p.id === profile.id);
+      const nextProfiles = exists
+        ? prev.profiles.map((p) =>
+            p.id === profile.id ? {...p, ...profile} : p
+          )
+        : [profile, ...prev.profiles];
+
+      return {
+        ...prev,
+        currentUserId: profile.id,
+        profiles: nextProfiles,
+      };
+    });
+  };
+
+  const loginWithApi = async (
+    identifier: string,
+    password: string
+  ): Promise<{ok: boolean; error?: string; profile?: Profile}> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'signin',
+          identifier,
+          password,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error:
+            data.error ||
+            'Gagal log masuk. Sila semak e-mel dan kata laluan anda.',
+        };
+      }
+
+      const profile = data.profile as Profile;
+      const token = String(data.token || '');
+      syncAuthenticatedProfileIntoStore(profile, token, false);
+
+      notifyToast(
+        `Selamat Kembali, ${profile.display_name}!`,
+        `${profile.faculty_short || 'UMS'} · ${profile.email || profile.matric_no}`,
+        'success'
+      );
+      return {ok: true, profile};
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal menghubungi pelayan pengesahan (/api/auth).',
+      };
+    }
+  };
+
+  const registerWithApi = async (params: {
+    displayName: string;
+    email: string;
+    password: string;
+    facultyShort: string;
+    facultyFull: string;
+    matricNo?: string;
+    phone?: string;
+  }): Promise<{ok: boolean; error?: string; profile?: Profile}> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'signup',
+          ...params,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error:
+            data.error ||
+            'Pendaftaran gagal. Sila semak maklumat yang dimasukkan.',
+        };
+      }
+
+      const profile = data.profile as Profile;
+      const token = String(data.token || '');
+      syncAuthenticatedProfileIntoStore(profile, token, true);
+
+      notifyToast(
+        'Akaun Berjaya Didaftarkan!',
+        `Selamat datang ke ProjectLink UMS, ${profile.display_name} (${profile.faculty_short}).`,
+        'success'
+      );
+      return {ok: true, profile};
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal menghubungi pelayan pendaftaran (/api/auth).',
+      };
+    }
+  };
+
+  const initiateSignUpWithApi = async (params: {
+    displayName: string;
+    email: string;
+    password: string;
+    facultyShort: string;
+    facultyFull: string;
+    matricNo?: string;
+    phone?: string;
+  }): Promise<{
+    ok: boolean;
+    error?: string;
+    email?: string;
+    verificationCode?: string;
+    message?: string;
+  }> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'initiate_signup',
+          ...params,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error:
+            data.error ||
+            'Pendaftaran tidak dapat diteruskan. Sila semak maklumat anda.',
+        };
+      }
+      notifyToast(
+        'Kod Pengesahan E-mel Dihantar',
+        `Sila masukkan kod 6-digit yang dihantar ke ${data.email}.`,
+        'default'
+      );
+      return {
+        ok: true,
+        email: String(data.email || params.email),
+        verificationCode: String(data.verificationCode || ''),
+        message: data.message,
+      };
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal menghubungi pelayan pengesahan (/api/auth).',
+      };
+    }
+  };
+
+  const verifySignUpCodeWithApi = async (
+    email: string,
+    code: string
+  ): Promise<{ok: boolean; error?: string; profile?: Profile}> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'verify_signup_code',
+          email,
+          code,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error:
+            data.error ||
+            'Kod pengesahan tidak sah. Sila cuba lagi.',
+        };
+      }
+
+      const profile = data.profile as Profile;
+      const token = String(data.token || '');
+      syncAuthenticatedProfileIntoStore(profile, token, true);
+
+      notifyToast(
+        'E-mel Disahkan & Akaun Aktif!',
+        `Selamat datang ke ProjectLink UMS, ${profile.display_name} (${profile.faculty_short}).`,
+        'success'
+      );
+      return {ok: true, profile};
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal mengesahkan kod bersama pelayan (/api/auth).',
+      };
+    }
+  };
+
+  const resendVerificationCodeWithApi = async (
+    email: string
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    verificationCode?: string;
+    message?: string;
+  }> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'resend_verification_code',
+          email,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error: data.error || 'Gagal menghantar semula kod pengesahan.',
+        };
+      }
+      notifyToast(
+        'Kod Baharu Dihantar',
+        `Kod pengesahan 6-digit baharu telah dijana untuk ${email}.`,
+        'success'
+      );
+      return {
+        ok: true,
+        verificationCode: String(data.verificationCode || ''),
+        message: data.message,
+      };
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal menghubungi pelayan (/api/auth).',
+      };
+    }
+  };
+
+  const initiatePasswordResetWithApi = async (
+    identifier: string
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    email?: string;
+    resetCode?: string;
+    message?: string;
+  }> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'initiate_password_reset',
+          identifier,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error:
+            data.error ||
+            'Gagal menjana kod OTP untuk tetapan semula kata laluan.',
+        };
+      }
+      notifyToast(
+        'Kod OTP Reset Kata Laluan Dijana',
+        data.message || `Kod 6-digit telah dihantar ke ${data.email}.`,
+        'default'
+      );
+      return {
+        ok: true,
+        email: String(data.email || identifier),
+        resetCode: String(data.resetCode || ''),
+        message: data.message,
+      };
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal menghubungi pelayan (/api/auth).',
+      };
+    }
+  };
+
+  const resetPasswordWithApi = async (
+    email: string,
+    newPassword: string,
+    code: string
+  ): Promise<{ok: boolean; error?: string; message?: string}> => {
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'reset_password',
+          email,
+          newPassword,
+          code,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        return {
+          ok: false,
+          error: data.error || 'Gagal menetapkan semula kata laluan.',
+        };
+      }
+      notifyToast('Kata Laluan Dikemas Kini', data.message, 'success');
+      return {ok: true, message: data.message};
+    } catch {
+      return {
+        ok: false,
+        error: 'Gagal menghubungi pelayan (/api/auth).',
+      };
+    }
+  };
+
+  const logoutWithApi = async (): Promise<void> => {
+    const token = authSessionToken;
+    setAuthSessionToken(null);
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.removeItem('projectlink_auth_token_v1');
+        window.sessionStorage.removeItem('projectlink_auth_session_v1');
+      } catch {
+        // Ignore storage errors
+      }
+    }
+    try {
+      await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          action: 'logout',
+          token,
+        }),
+      });
+    } catch {
+      // Non-blocking logout
+    }
   };
 
   const resetDemoDatabase = () => {
@@ -682,13 +1267,7 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
       ...prev,
       profiles: prev.profiles.map((p) => {
         if (p.id !== uid) return p;
-        const currentTags = p.active_filter_tags || [
-          'Programming',
-          'Planning',
-          'Database',
-          'Extrovert',
-          'Female only',
-        ];
+        const currentTags = p.active_filter_tags || [];
         const exists = currentTags.includes(tag);
         const nextTags = exists
           ? currentTags.filter((t) => t !== tag)
@@ -704,16 +1283,9 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
 
   const randomizeFilterTags = () => {
     const uid = state.currentUserId;
-    const pool = [
-      'Programming',
-      'Planning',
-      'Database',
-      'Extrovert',
-      'Female only',
-    ];
-    const picked = pool.filter(() => Math.random() > 0.25);
-    const finalTags =
-      picked.length >= 2 ? picked : ['Programming', 'Database', 'Planning'];
+    const pool = OFFICIAL_FILTER_TAGS.map((t) => t.id);
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    const finalTags = shuffled.slice(0, 3);
     setState((prev) => ({
       ...prev,
       profiles: prev.profiles.map((p) =>
@@ -728,119 +1300,123 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     }));
   };
 
-  // Add Student Skill into normalized skills + student_skills tables
+  // Add Student Skill strictly from predetermined official INITIAL_SKILLS catalog
   const addStudentSkillByName = (
-    skillName: string,
+    skillNameOrId: string,
     proficiency: Proficiency = 'intermediate'
   ) => {
-    const clean = skillName.trim();
+    const clean = skillNameOrId.trim();
     if (!clean) return;
     const uid = state.currentUserId;
 
-    setState((prev) => {
-      let skillObj = prev.skills.find(
-        (s) => s.name.toLowerCase() === clean.toLowerCase()
+    const matchedSkill = INITIAL_SKILLS.find(
+      (s) =>
+        s.id.toLowerCase() === clean.toLowerCase() ||
+        s.name.toLowerCase() === clean.toLowerCase()
+    );
+    if (!matchedSkill) {
+      notifyToast(
+        'Pilih Kemahiran Rasmi',
+        'Sila pilih kemahiran daripada senarai rasmi UMS yang disediakan.',
+        'error'
       );
-      let nextSkillsCatalog = prev.skills;
-      if (!skillObj) {
-        skillObj = {
-          id: `sk-custom-${Date.now().toString(36)}`,
-          name: clean,
-          category: 'Programming',
-        };
-        nextSkillsCatalog = [...prev.skills, skillObj];
-      }
+      return;
+    }
 
+    setState((prev) => {
       const alreadyHas = prev.studentSkills.some(
-        (ss) => ss.student_id === uid && ss.skill_id === skillObj!.id
+        (ss) => ss.student_id === uid && ss.skill_id === matchedSkill.id
       );
-      if (alreadyHas) return prev;
+      if (alreadyHas) {
+        return {
+          ...prev,
+          studentSkills: prev.studentSkills.map((ss) =>
+            ss.student_id === uid && ss.skill_id === matchedSkill.id
+              ? {...ss, proficiency}
+              : ss
+          ),
+        };
+      }
 
       return {
         ...prev,
-        skills: nextSkillsCatalog,
         studentSkills: [
           ...prev.studentSkills,
           {
             student_id: uid,
-            skill_id: skillObj.id,
+            skill_id: matchedSkill.id,
             proficiency,
           },
         ],
       };
     });
 
-    notifyToast('Kemahiran Ditambah', `${clean} (${proficiency})`, 'success');
+    notifyToast(
+      'Kemahiran Dikemas Kini',
+      `${matchedSkill.name} (${proficiency})`,
+      'success'
+    );
   };
 
   const removeStudentSkillById = (skillId: string) => {
     const uid = state.currentUserId;
-    setState((prev) => {
-      const userSkills = prev.studentSkills.filter((s) => s.student_id === uid);
-      if (userSkills.length <= 1) return prev;
-      return {
-        ...prev,
-        studentSkills: prev.studentSkills.filter(
-          (s) => !(s.student_id === uid && s.skill_id === skillId)
-        ),
-      };
-    });
+    setState((prev) => ({
+      ...prev,
+      studentSkills: prev.studentSkills.filter(
+        (s) => !(s.student_id === uid && s.skill_id === skillId)
+      ),
+    }));
   };
 
-  // Add Student Interest into normalized interests + student_interests tables
-  const addStudentInterestByName = (interestName: string) => {
-    const clean = interestName.trim();
+  // Add Student Interest strictly from predetermined official INITIAL_INTERESTS catalog
+  const addStudentInterestByName = (interestNameOrId: string) => {
+    const clean = interestNameOrId.trim();
     if (!clean) return;
     const uid = state.currentUserId;
 
-    setState((prev) => {
-      let intrObj = prev.interests.find(
-        (i) => i.name.toLowerCase() === clean.toLowerCase()
+    const matchedInterest = INITIAL_INTERESTS.find(
+      (i) =>
+        i.id.toLowerCase() === clean.toLowerCase() ||
+        i.name.toLowerCase() === clean.toLowerCase()
+    );
+    if (!matchedInterest) {
+      notifyToast(
+        'Pilih Minat Rasmi',
+        'Sila pilih bidang minat daripada senarai rasmi UMS yang disediakan.',
+        'error'
       );
-      let nextInterestsCatalog = prev.interests;
-      if (!intrObj) {
-        intrObj = {
-          id: `in-custom-${Date.now().toString(36)}`,
-          name: clean,
-        };
-        nextInterestsCatalog = [...prev.interests, intrObj];
-      }
+      return;
+    }
 
+    setState((prev) => {
       const alreadyHas = prev.studentInterests.some(
-        (si) => si.student_id === uid && si.interest_id === intrObj!.id
+        (si) => si.student_id === uid && si.interest_id === matchedInterest.id
       );
       if (alreadyHas) return prev;
 
       return {
         ...prev,
-        interests: nextInterestsCatalog,
         studentInterests: [
           ...prev.studentInterests,
           {
             student_id: uid,
-            interest_id: intrObj.id,
+            interest_id: matchedInterest.id,
           },
         ],
       };
     });
 
-    notifyToast('Minat Ditambah', clean, 'success');
+    notifyToast('Minat Ditambah', matchedInterest.name, 'success');
   };
 
   const removeStudentInterestById = (interestId: string) => {
     const uid = state.currentUserId;
-    setState((prev) => {
-      const userInterests = prev.studentInterests.filter(
-        (i) => i.student_id === uid
-      );
-      if (userInterests.length <= 1) return prev;
-      return {
-        ...prev,
-        studentInterests: prev.studentInterests.filter(
-          (i) => !(i.student_id === uid && i.interest_id === interestId)
-        ),
-      };
-    });
+    setState((prev) => ({
+      ...prev,
+      studentInterests: prev.studentInterests.filter(
+        (i) => !(i.student_id === uid && i.interest_id === interestId)
+      ),
+    }));
   };
 
   const addAvailabilitySlot = (slot: {
@@ -966,6 +1542,17 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
         banner_url: payload.p_banner_url ?? null,
         banner_preset: payload.p_banner_preset || 'prj-techfest',
         banner_position_y: payload.p_banner_position_y ?? 50,
+        gallery_images:
+          payload.p_gallery_images && payload.p_gallery_images.length > 0
+            ? payload.p_gallery_images
+            : getDefaultGalleryForProject(
+                projectId,
+                title,
+                payload.p_location || 'Dewan Canselor, UMS',
+                payload.p_date_display ||
+                  payload.p_deadline ||
+                  '22 – 24 Nov 2026'
+              ),
         created_at: now,
         updated_at: now,
       };
@@ -1021,6 +1608,145 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     return projectId;
   };
 
+  // Author-Only (or Admin) Update Project Info & Details
+  const updateProjectDetails = (
+    projectId: string,
+    updates: {
+      title?: string;
+      description?: string;
+      project_type?: ProjectType;
+      date_display?: string;
+      deadline?: string | null;
+      location?: string;
+      audience?: string;
+      slots_needed?: number;
+      min_weekly_hours?: number;
+      organizer_name?: string;
+      organizer_phone?: string;
+      badge_line_1?: string;
+      badge_line_2?: string;
+      tags?: string[];
+      status?: ProjectStatus;
+    }
+  ): boolean => {
+    const uid = state.currentUserId;
+    const target = state.projects.find((p) => p.id === projectId);
+    if (!target) return false;
+    if (target.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) yang memuat naik aktiviti ini dibenarkan menyunting maklumat.',
+        'error'
+      );
+      return false;
+    }
+    const now = new Date().toISOString();
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              title: updates.title?.trim() || p.title,
+              description: updates.description?.trim() || p.description,
+              project_type: updates.project_type || p.project_type,
+              date_display:
+                updates.date_display !== undefined
+                  ? updates.date_display.trim()
+                  : p.date_display,
+              deadline:
+                updates.deadline !== undefined ? updates.deadline : p.deadline,
+              location:
+                updates.location !== undefined
+                  ? updates.location.trim()
+                  : p.location,
+              audience:
+                updates.audience !== undefined
+                  ? updates.audience.trim()
+                  : p.audience,
+              slots_needed:
+                updates.slots_needed !== undefined
+                  ? Math.max(1, Number(updates.slots_needed) || 1)
+                  : p.slots_needed,
+              min_weekly_hours:
+                updates.min_weekly_hours !== undefined
+                  ? Math.max(1, Number(updates.min_weekly_hours) || 1)
+                  : p.min_weekly_hours,
+              organizer_name:
+                updates.organizer_name !== undefined
+                  ? updates.organizer_name.trim()
+                  : p.organizer_name,
+              organizer_phone:
+                updates.organizer_phone !== undefined
+                  ? updates.organizer_phone.trim()
+                  : p.organizer_phone,
+              badge_line_1:
+                updates.badge_line_1 !== undefined
+                  ? updates.badge_line_1.trim()
+                  : p.badge_line_1,
+              badge_line_2:
+                updates.badge_line_2 !== undefined
+                  ? updates.badge_line_2.trim()
+                  : p.badge_line_2,
+              tags: updates.tags !== undefined ? updates.tags : p.tags,
+              status: updates.status || p.status,
+              updated_at: now,
+            }
+          : p
+      ),
+    }));
+    notifyToast(
+      'Maklumat Aktiviti Dikemas Kini',
+      `Perubahan pada "${updates.title?.trim() || target.title}" telah disimpan.`,
+      'success'
+    );
+    return true;
+  };
+
+  // Author-Only (or Admin) Delete Own Project
+  const deleteOwnProject = (projectId: string): boolean => {
+    const uid = state.currentUserId;
+    const target = state.projects.find((p) => p.id === projectId);
+    if (!target) return false;
+    if (target.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) aktiviti ini dibenarkan memadamkannya.',
+        'error'
+      );
+      return false;
+    }
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.filter((p) => p.id !== projectId),
+      projectRequiredSkills: prev.projectRequiredSkills.filter(
+        (r) => r.project_id !== projectId
+      ),
+      projectInterests: prev.projectInterests.filter(
+        (i) => i.project_id !== projectId
+      ),
+      projectMeetingSlots: prev.projectMeetingSlots.filter(
+        (m) => m.project_id !== projectId
+      ),
+      projectMembers: prev.projectMembers.filter(
+        (m) => m.project_id !== projectId
+      ),
+      savedProjects: prev.savedProjects.filter(
+        (s) => s.project_id !== projectId
+      ),
+      applications: prev.applications.filter((a) => a.project_id !== projectId),
+      reports: prev.reports.filter(
+        (r) => !(r.target_type === 'project' && r.target_id === projectId)
+      ),
+    }));
+    notifyToast(
+      'Aktiviti Dipadamkan',
+      `"${target.title}" telah dipadamkan oleh pencipta.`,
+      'default'
+    );
+    return true;
+  };
+
   // Owner-Only Update Project Banner / Poster Image
   const updateProjectBanner = (
     projectId: string,
@@ -1033,10 +1759,10 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     const uid = state.currentUserId;
     const target = state.projects.find((p) => p.id === projectId);
     if (!target) return;
-    if (target.owner_id !== uid) {
+    if (target.owner_id !== uid && !isAdmin) {
       notifyToast(
-        'Hanya Pemilik Boleh Tukar Gambar',
-        'Hanya pemilik atau penganjur asal aktiviti ini dibenarkan menukar gambar poster.',
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) aktiviti ini dibenarkan menukar gambar poster.',
         'error'
       );
       return;
@@ -1066,6 +1792,101 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
       'Gambar Poster Dikemas Kini',
       `Poster bagi "${target.title}" telah disimpan.`,
       'success'
+    );
+  };
+
+  // Author-Only (or Admin) Add Poster / Catalog Image to Activity Gallery
+  const addProjectGalleryImage = (
+    projectId: string,
+    item: {url: string; caption: string; badge?: string}
+  ) => {
+    const uid = state.currentUserId;
+    const cleanUrl = item.url.trim();
+    if (!cleanUrl) return;
+    const target = state.projects.find((p) => p.id === projectId);
+    if (!target) return;
+    if (target.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) aktiviti ini dibenarkan menambah gambar katalog.',
+        'error'
+      );
+      return;
+    }
+    const newItem: ProjectGalleryItem = {
+      id: `gal-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`,
+      url: cleanUrl,
+      caption: item.caption.trim() || `Poster Katalog ${target.title}`,
+      badge: item.badge?.trim() || 'Poster Katalog',
+    };
+    const now = new Date().toISOString();
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) => {
+        if (p.id !== projectId) return p;
+        const currentGallery =
+          Array.isArray(p.gallery_images) && p.gallery_images.length > 0
+            ? p.gallery_images
+            : getDefaultGalleryForProject(
+                p.id,
+                p.title,
+                p.location || 'Dewan Canselor, UMS',
+                p.date_display || '12 – 14 Nov 2026'
+              );
+        return {
+          ...p,
+          gallery_images: [newItem, ...currentGallery],
+          updated_at: now,
+        };
+      }),
+    }));
+    notifyToast(
+      'Gambar Katalog Ditambah',
+      `Gambar baharu telah dimasukkan ke dalam katalog "${target.title}".`,
+      'success'
+    );
+  };
+
+  // Author-Only (or Admin) Remove Poster / Catalog Image from Activity Gallery
+  const removeProjectGalleryImage = (projectId: string, imageId: string) => {
+    const uid = state.currentUserId;
+    const target = state.projects.find((p) => p.id === projectId);
+    if (!target) return;
+    if (target.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta asal (Author) aktiviti ini dibenarkan memadam gambar katalog.',
+        'error'
+      );
+      return;
+    }
+    const now = new Date().toISOString();
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) => {
+        if (p.id !== projectId) return p;
+        const currentGallery =
+          Array.isArray(p.gallery_images) && p.gallery_images.length > 0
+            ? p.gallery_images
+            : getDefaultGalleryForProject(
+                p.id,
+                p.title,
+                p.location || 'Dewan Canselor, UMS',
+                p.date_display || '12 – 14 Nov 2026'
+              );
+        return {
+          ...p,
+          gallery_images: currentGallery.filter((img) => img.id !== imageId),
+          updated_at: now,
+        };
+      }),
+    }));
+    notifyToast(
+      'Gambar Katalog Dipadamkan',
+      'Gambar telah dikeluarkan daripada katalog aktiviti.',
+      'default'
     );
   };
 
@@ -1135,15 +1956,24 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     return appId;
   };
 
-  // RPC 4: decide_application
+  // RPC 4: decide_application (Author or Admin only)
   const decideApplication = (
     p_application_id: string,
     p_decision: 'accepted' | 'declined'
   ) => {
+    const uid = state.currentUserId;
     const app = state.applications.find((a) => a.id === p_application_id);
     if (!app) return;
     const proj = state.projects.find((p) => p.id === app.project_id);
     if (!proj) return;
+    if (proj.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta aktiviti boleh menerima atau menolak permohonan.',
+        'error'
+      );
+      return;
+    }
 
     const now = new Date().toISOString();
     setState((prev) => {
@@ -1218,7 +2048,7 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     notifyToast('Permohonan Ditarik Balik');
   };
 
-  // RPC 6: invite_candidate
+  // RPC 6: invite_candidate (Author or Admin only)
   const inviteCandidate = (
     p_project_id: string,
     p_invitee_id: string,
@@ -1227,6 +2057,14 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     const uid = state.currentUserId;
     const proj = state.projects.find((p) => p.id === p_project_id);
     if (!proj) return '';
+    if (proj.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta aktiviti boleh menjemput ahli pasukan.',
+        'error'
+      );
+      return '';
+    }
     const candidate = state.profiles.find((p) => p.id === p_invitee_id);
     if (!candidate) return '';
 
@@ -1326,8 +2164,19 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     );
   };
 
-  // RPC 8: set_project_status
+  // RPC 8: set_project_status (Author or Admin only)
   const setProjectStatus = (p_project_id: string, p_status: ProjectStatus) => {
+    const uid = state.currentUserId;
+    const target = state.projects.find((p) => p.id === p_project_id);
+    if (!target) return;
+    if (target.owner_id !== uid && !isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Bukan Pencipta)',
+        'Hanya pencipta aktiviti boleh menukar status siaran.',
+        'error'
+      );
+      return;
+    }
     const now = new Date().toISOString();
     setState((prev) => ({
       ...prev,
@@ -1570,6 +2419,14 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
     status: 'resolved' | 'dismissed',
     resolutionNote: string
   ) => {
+    if (!isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Admin Sahaja)',
+        'Hanya pentadbir sistem boleh menyelesaikan laporan moderasi.',
+        'error'
+      );
+      return;
+    }
     setState((prev) => ({
       ...prev,
       reports: prev.reports.map((r) =>
@@ -1578,6 +2435,344 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
           : r
       ),
     }));
+    notifyToast(
+      status === 'resolved' ? 'Laporan Diselesaikan' : 'Laporan Ditolak',
+      resolutionNote.trim() || 'Status laporan moderasi telah dikemas kini.',
+      'success'
+    );
+  };
+
+  const adminDeleteProject = (projectId: string) => {
+    if (!isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Admin Sahaja)',
+        'Hanya pentadbir sistem boleh memadam aktiviti pengguna lain.',
+        'error'
+      );
+      return;
+    }
+    const target = state.projects.find((p) => p.id === projectId);
+    if (!target) return;
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.filter((p) => p.id !== projectId),
+      projectRequiredSkills: prev.projectRequiredSkills.filter(
+        (r) => r.project_id !== projectId
+      ),
+      projectInterests: prev.projectInterests.filter(
+        (i) => i.project_id !== projectId
+      ),
+      projectMeetingSlots: prev.projectMeetingSlots.filter(
+        (m) => m.project_id !== projectId
+      ),
+      projectMembers: prev.projectMembers.filter(
+        (m) => m.project_id !== projectId
+      ),
+      savedProjects: prev.savedProjects.filter(
+        (s) => s.project_id !== projectId
+      ),
+      applications: prev.applications.filter((a) => a.project_id !== projectId),
+      reports: prev.reports.filter(
+        (r) => !(r.target_type === 'project' && r.target_id === projectId)
+      ),
+    }));
+    notifyToast(
+      'Aktiviti Dipadamkan (Admin)',
+      `"${target.title}" telah dikeluarkan daripada senarai aktiviti kampus.`,
+      'default'
+    );
+  };
+
+  const adminUpdateProjectStatus = (
+    projectId: string,
+    status: ProjectStatus
+  ) => {
+    if (!isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Admin Sahaja)',
+        'Hanya pentadbir sistem boleh menukar status melalui Admin Panel.',
+        'error'
+      );
+      return;
+    }
+    const target = state.projects.find((p) => p.id === projectId);
+    if (!target) return;
+    const now = new Date().toISOString();
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) =>
+        p.id === projectId ? {...p, status, updated_at: now} : p
+      ),
+    }));
+    notifyToast(
+      'Status Aktiviti Dikemas Kini',
+      `"${target.title}" kini berstatus ${status.toUpperCase()}.`,
+      'success'
+    );
+  };
+
+  const adminDeleteUser = (userId: string) => {
+    if (!isAdmin) {
+      notifyToast(
+        'Akses Ditolak (Admin Sahaja)',
+        'Hanya pentadbir sistem boleh mengurus akaun pengguna.',
+        'error'
+      );
+      return;
+    }
+    const target = state.profiles.find((p) => p.id === userId);
+    if (!target) return;
+    if (
+      target.role === 'admin' ||
+      target.email?.toLowerCase() === 'fahrinmuneer3@gmail.com'
+    ) {
+      notifyToast(
+        'Tindakan Tidak Dibenarkan',
+        'Akaun Admin utama tidak boleh dipadamkan.',
+        'error'
+      );
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      profiles: prev.profiles.filter((p) => p.id !== userId),
+      studentSkills: prev.studentSkills.filter((s) => s.student_id !== userId),
+      studentInterests: prev.studentInterests.filter(
+        (i) => i.student_id !== userId
+      ),
+      availabilitySlots: prev.availabilitySlots.filter(
+        (a) => a.student_id !== userId
+      ),
+    }));
+
+    fetch('/api/auth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authSessionToken
+          ? {Authorization: `Bearer ${authSessionToken}`}
+          : {}),
+      },
+      body: JSON.stringify({
+        action: 'admin_delete_user',
+        targetUserId: userId,
+        token: authSessionToken,
+      }),
+    }).catch(() => {
+      // Non-blocking backend sync
+    });
+
+    notifyToast(
+      'Pengguna Dipadamkan (Admin)',
+      `Akaun ${target.display_name} (${target.email || target.matric_no}) telah dikeluarkan.`,
+      'default'
+    );
+  };
+
+  const seedStarterActivities = () => {
+    const ownerId = currentUser?.id || 'usr-admin';
+    const ownerName = currentUser?.display_name
+      ? `${currentUser.display_name} (${currentUser.faculty_short || 'FKI'} UMS)`
+      : 'Fahrin Muneer (FKI UMS)';
+    const ownerPhone = currentUser?.phone || '+60 12-883 4910';
+    const now = new Date().toISOString();
+
+    const starterSkills: Skill[] = [
+      {id: 'sk-ts', name: 'TypeScript / Next.js', category: 'Technical'},
+      {id: 'sk-python', name: 'Python & AI / ML', category: 'Data'},
+      {id: 'sk-uiux', name: 'UI/UX & Figma', category: 'Design'},
+      {id: 'sk-iot', name: 'IoT & Embedded ESP32', category: 'Engineering'},
+      {id: 'sk-pitch', name: 'Project Management & Pitching', category: 'Business'},
+    ];
+
+    const starterInterests: Interest[] = [
+      {id: 'in-ai', name: 'Artificial Intelligence'},
+      {id: 'in-smartcampus', name: 'Smart Campus & IoT'},
+      {id: 'in-marine', name: 'Marine & Sustainability'},
+    ];
+
+    const starterProjects: Project[] = [
+      {
+        id: 'prj-techfest',
+        owner_id: ownerId,
+        title: 'Borneo AI & Smart Campus Hackathon 2026',
+        description:
+          'Pertandingan inovasi AI & kelestarian kampus peringkat UMS Kota Kinabalu. Membina prototaip aplikasi pintar bersama mentor industri.',
+        project_type: 'Competition',
+        status: 'open',
+        slots_needed: 4,
+        min_weekly_hours: 6,
+        deadline: '2026-11-24',
+        created_at: now,
+        updated_at: now,
+        date_display: '22 – 24 Nov 2026',
+        location: 'Dewan Kuliah Pusat 2 (DKP 2), UMS',
+        audience: 'Terbuka kepada semua pelajar FKI, FKJ & UMS',
+        badge_line_1: 'Hackathon',
+        badge_line_2: 'FKI UMS',
+        tags: ['AI & Web', 'Teamwork', 'SDP +20'],
+        attribute_tags: ['Programming', 'Design', 'Presentation'],
+        organizer_phone: ownerPhone,
+        organizer_name: ownerName,
+        banner_preset: 'prj-techfest',
+        banner_position_y: 50,
+      },
+      {
+        id: 'prj-shuttle',
+        owner_id: ownerId,
+        title: 'UMS Smart Shuttle Live Tracker (IoT + Mobile)',
+        description:
+          'Projek inovasi penjejakan bas kampus UMS secara masa nyata menggunakan GPS ESP32 dan paparan peta interaktif untuk pelajar kolej kediaman.',
+        project_type: 'Innovation',
+        status: 'open',
+        slots_needed: 3,
+        min_weekly_hours: 5,
+        deadline: '2026-12-05',
+        created_at: now,
+        updated_at: now,
+        date_display: '1 – 5 Dis 2026',
+        location: 'Makmal IoT FKI & Perhentian Bas Tun Mustapha, UMS',
+        audience: 'Pelajar Kejuruteraan (FKJ) & Komputeran (FKI)',
+        badge_line_1: 'Inovasi',
+        badge_line_2: 'Smart UMS',
+        tags: ['IoT GPS', 'Mobile UI', 'Smart Campus'],
+        attribute_tags: ['Programming', 'Research', 'Planning'],
+        organizer_phone: ownerPhone,
+        organizer_name: ownerName,
+        banner_preset: 'prj-shuttle',
+        banner_position_y: 50,
+      },
+      {
+        id: 'prj-reef',
+        owner_id: ownerId,
+        title: 'Sepanggar Bay Coral & Marine AI Monitoring',
+        description:
+          'Kolaborasi lapangan antara FSSA, IPMB dan FKI untuk memantau kesihatan terumbu karang Teluk Sepanggar menggunakan visi komputer dan sensor kualiti air.',
+        project_type: 'Community',
+        status: 'open',
+        slots_needed: 5,
+        min_weekly_hours: 4,
+        deadline: '2026-12-14',
+        created_at: now,
+        updated_at: now,
+        date_display: '12 – 14 Dis 2026',
+        location: 'Jeti IPMB & Akuarium UMS, Kota Kinabalu',
+        audience: 'Terbuka kepada semua fakulti UMS',
+        badge_line_1: 'Komuniti',
+        badge_line_2: 'Marine UMS',
+        tags: ['Marine Bio', 'Data Sensor', 'Fieldwork'],
+        attribute_tags: ['Research', 'Documentation', 'Marketing'],
+        organizer_phone: ownerPhone,
+        organizer_name: ownerName,
+        banner_preset: 'prj-reef',
+        banner_position_y: 50,
+      },
+    ];
+
+    setState((prev) => {
+      const mergedSkills = [...prev.skills];
+      for (const sk of starterSkills) {
+        if (!mergedSkills.some((existing) => existing.id === sk.id)) {
+          mergedSkills.push(sk);
+        }
+      }
+
+      const mergedInterests = [...prev.interests];
+      for (const intr of starterInterests) {
+        if (!mergedInterests.some((existing) => existing.id === intr.id)) {
+          mergedInterests.push(intr);
+        }
+      }
+
+      const existingIds = new Set(prev.projects.map((p) => p.id));
+      const newProjects = [
+        ...starterProjects.filter((p) => !existingIds.has(p.id)),
+        ...prev.projects,
+      ];
+
+      const newReqSkills = [
+        ...prev.projectRequiredSkills.filter(
+          (r) => !['prj-techfest', 'prj-shuttle', 'prj-reef'].includes(r.project_id)
+        ),
+        {project_id: 'prj-techfest', skill_id: 'sk-ts', mandatory: true, importance: 5},
+        {project_id: 'prj-techfest', skill_id: 'sk-uiux', mandatory: false, importance: 4},
+        {project_id: 'prj-shuttle', skill_id: 'sk-iot', mandatory: true, importance: 5},
+        {project_id: 'prj-shuttle', skill_id: 'sk-ts', mandatory: false, importance: 4},
+        {project_id: 'prj-reef', skill_id: 'sk-python', mandatory: false, importance: 4},
+        {project_id: 'prj-reef', skill_id: 'sk-pitch', mandatory: false, importance: 3},
+      ];
+
+      const newProjInterests = [
+        ...prev.projectInterests.filter(
+          (i) => !['prj-techfest', 'prj-shuttle', 'prj-reef'].includes(i.project_id)
+        ),
+        {project_id: 'prj-techfest', interest_id: 'in-ai'},
+        {project_id: 'prj-shuttle', interest_id: 'in-smartcampus'},
+        {project_id: 'prj-reef', interest_id: 'in-marine'},
+      ];
+
+      const newMeetingSlots = [
+        ...prev.projectMeetingSlots.filter(
+          (m) => !['prj-techfest', 'prj-shuttle', 'prj-reef'].includes(m.project_id)
+        ),
+        {
+          id: 'ms-starter-1',
+          project_id: 'prj-techfest',
+          weekday: 3,
+          start_time: '14:00',
+          end_time: '16:00',
+        },
+        {
+          id: 'ms-starter-2',
+          project_id: 'prj-shuttle',
+          weekday: 5,
+          start_time: '15:00',
+          end_time: '17:00',
+        },
+        {
+          id: 'ms-starter-3',
+          project_id: 'prj-reef',
+          weekday: 6,
+          start_time: '09:00',
+          end_time: '12:00',
+        },
+      ];
+
+      const newMembers = [...prev.projectMembers];
+      for (const sp of starterProjects) {
+        if (
+          !newMembers.some(
+            (m) => m.project_id === sp.id && m.student_id === ownerId
+          )
+        ) {
+          newMembers.push({
+            project_id: sp.id,
+            student_id: ownerId,
+            member_role: 'owner',
+            membership_status: 'active',
+            joined_at: now,
+          });
+        }
+      }
+
+      return {
+        ...prev,
+        skills: mergedSkills,
+        interests: mergedInterests,
+        projects: newProjects,
+        projectRequiredSkills: newReqSkills,
+        projectInterests: newProjInterests,
+        projectMeetingSlots: newMeetingSlots,
+        projectMembers: newMembers,
+      };
+    });
+
+    notifyToast(
+      '3 Aktiviti Kampus UMS Dimuatkan',
+      'Katalog aktiviti, kemahiran, dan jadual perjumpaan sedia untuk diterokai.',
+      'success'
+    );
   };
 
   return (
@@ -1585,6 +2780,7 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
       value={{
         ...state,
         currentUser,
+        isAdmin,
         toasts,
         dismissToast,
         notifyToast,
@@ -1592,8 +2788,18 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
         createCustomTestAccount,
         registerStudentAccount,
         signInWithCredentials,
+        authSessionToken,
+        loginWithApi,
+        registerWithApi,
+        initiateSignUpWithApi,
+        verifySignUpCodeWithApi,
+        resendVerificationCodeWithApi,
+        initiatePasswordResetWithApi,
+        resetPasswordWithApi,
+        logoutWithApi,
         resetDemoDatabase,
         refreshProjectsFeed,
+        seedStarterActivities,
         saveMyProfile,
         createProject,
         applyToProject,
@@ -1616,7 +2822,11 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
         addAvailabilitySlot,
         removeAvailabilitySlot,
         addActivityHistory,
+        updateProjectDetails,
+        deleteOwnProject,
         updateProjectBanner,
+        addProjectGalleryImage,
+        removeProjectGalleryImage,
         toggleSaveProject,
         saveProjectOnly,
         createTask,
@@ -1627,6 +2837,9 @@ export function ProjectLinkProvider({children}: {children: React.ReactNode}) {
         submitBetaResult,
         submitReport,
         resolveReport,
+        adminDeleteProject,
+        adminUpdateProjectStatus,
+        adminDeleteUser,
       }}
     >
       {children}
